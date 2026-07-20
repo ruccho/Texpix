@@ -41,6 +41,19 @@ namespace Texpix
         public TexpixWrapMode WrapMode;
         public TexpixOverflowMode Overflow;
 
+        /// <summary>
+        ///     Extra spacing inserted between adjacent items (glyphs and sprites) on a
+        ///     line, in font pixels. May be negative. Participates in wrapping,
+        ///     trimming and alignment like kerning does.
+        /// </summary>
+        public int LetterSpacingPx;
+
+        /// <summary>
+        ///     Adjustment added to the font's line height, in font pixels. May be
+        ///     negative; the effective line height is clamped to 1.
+        /// </summary>
+        public int LineSpacingPx;
+
         /// <summary>Enables the minimal tag set: color, sprite, noparse, br.</summary>
         public bool RichText;
 
@@ -111,11 +124,11 @@ namespace Texpix
             quads.Clear();
             spriteQuads?.Clear();
             Shape(font, text ?? "", in settings);
-            BreakLines(font, settings.MaxWidthPx, settings.WrapMode == TexpixWrapMode.Wrap);
+            BreakLines(font, settings.MaxWidthPx, settings.WrapMode == TexpixWrapMode.Wrap, settings.LetterSpacingPx);
 
             var ascent = font.Ascent;
             var descent = font.Descent;
-            var lineHeight = font.LineHeight;
+            var lineHeight = Mathf.Max(1, font.LineHeight + settings.LineSpacingPx);
             var singleLineHeight = ascent - descent;
 
             // Vertical overflow: number of lines that fit the rect (always at least one).
@@ -164,7 +177,7 @@ namespace Texpix
                     }
 
                 var baseline = -(top + ascent + k * lineHeight);
-                EmitLine(font, line, xOffset, baseline, quads, spriteQuads);
+                EmitLine(font, line, xOffset, baseline, settings.LetterSpacingPx, quads, spriteQuads);
             }
 
             return new TexpixTextMetrics
@@ -322,7 +335,7 @@ namespace Texpix
             return false;
         }
 
-        private static void BreakLines(ITexpixFontSource font, int maxWidth, bool wrap)
+        private static void BreakLines(ITexpixFontSource font, int maxWidth, bool wrap, int letterSpacing)
         {
             SLines.Clear();
             var count = SItems.Count;
@@ -369,7 +382,9 @@ namespace Texpix
                 var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
                     ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                     : 0;
-                var newPen = pen + kern + item.Glyph.Advance;
+                // Letter spacing behaves like a constant kern between adjacent items.
+                var spacing = i > lineStart ? letterSpacing : 0;
+                var newPen = pen + spacing + kern + item.Glyph.Advance;
 
                 if (lineHasContent && !item.Whitespace && i > lineStart)
                 {
@@ -451,7 +466,8 @@ namespace Texpix
                     var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
                         ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                         : 0;
-                    pen += kern + item.Glyph.Advance;
+                    var spacing = i > line.Start ? settings.LetterSpacingPx : 0;
+                    pen += spacing + kern + item.Glyph.Advance;
                     // Kerning only applies between glyphs of the primary font; a fallback
                     // glyph breaks the pair.
                     previousGlyphIndex = item.Glyph.SourceFontIndex == 0 ? item.Glyph.GlyphIndex : 0;
@@ -473,7 +489,7 @@ namespace Texpix
         }
 
         private static void EmitLine(ITexpixFontSource font, in Line line, int xOffset, int baseline,
-            List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
+            int letterSpacing, List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
         {
             var pen = 0;
             uint previousGlyphIndex = 0;
@@ -485,7 +501,7 @@ namespace Texpix
                 var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
                     ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                     : 0;
-                pen += kern;
+                pen += (i > line.Start ? letterSpacing : 0) + kern;
                 if (item.Glyph.HasBitmap)
                 {
                     var target = item.Sprite ? spriteQuads : quads;

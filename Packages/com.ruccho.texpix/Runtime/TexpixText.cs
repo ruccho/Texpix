@@ -41,6 +41,8 @@ namespace Texpix
         [SerializeField] private TexpixVerticalAlignment verticalAlignment = TexpixVerticalAlignment.Top;
         [SerializeField] private TexpixWrapMode wrapMode = TexpixWrapMode.Wrap;
         [SerializeField] private TexpixOverflowMode overflow = TexpixOverflowMode.Overflow;
+        [SerializeField] private int letterSpacing;
+        [SerializeField] private int lineSpacing;
         [SerializeField] private bool snapToPixelGrid = true;
         [SerializeField] private bool richText = true;
         [SerializeField] private TexpixSpriteAsset spriteAsset;
@@ -137,6 +139,32 @@ namespace Texpix
                 if (overflow == value)
                     return;
                 overflow = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>Extra spacing between characters/sprites in font pixels; may be negative.</summary>
+        public int LetterSpacing
+        {
+            get => letterSpacing;
+            set
+            {
+                if (letterSpacing == value)
+                    return;
+                letterSpacing = value;
+                SetVerticesDirty();
+            }
+        }
+
+        /// <summary>Adjustment to the font's line height in font pixels; may be negative.</summary>
+        public int LineSpacing
+        {
+            get => lineSpacing;
+            set
+            {
+                if (lineSpacing == value)
+                    return;
+                lineSpacing = value;
                 SetVerticesDirty();
             }
         }
@@ -445,6 +473,8 @@ namespace Texpix
                 VerticalAlignment = verticalAlignment,
                 WrapMode = wrapMode,
                 Overflow = overflow,
+                LetterSpacingPx = letterSpacing,
+                LineSpacingPx = lineSpacing,
                 RichText = richText,
                 SpriteAsset = spriteAsset
             };
