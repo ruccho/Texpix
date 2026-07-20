@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-<img width="1920" height="1080" alt="Image" src="https://github.com/user-attachments/assets/136cda22-0931-4141-a566-9528d3ca30ca" />
+<img width="720" alt="Image" src="https://github.com/user-attachments/assets/136cda22-0931-4141-a566-9528d3ca30ca" />
 
 **A pixel-font rendering system for Unity (uGUI).**
 
@@ -35,10 +35,15 @@ https://github.com/ruccho/Texpix.git?path=Packages/com.ruccho.texpix#release
 
 1. Import a pixel-font TTF into your project.
 2. **Assets → Create → Texpix → Font Asset**. Assign the TTF to **Source Font**, and set **Pixel Size** to the font's native size — the size at which the font was designed. Getting this number right is the whole trick; a wrong value is what makes pixel fonts look mushy.
+
+<img width="500" alt="Image" src="https://github.com/user-attachments/assets/4d1152d3-8541-474d-a768-f4071525969f" />
+
 3. In a Canvas, **GameObject → UI → Texpix Text**.
 4. Assign the font asset, type your text, and set **Pixel Scale** to how many canvas units one font pixel should occupy. Use an integer (1, 2, 3, …).
 
 That's it — the atlas is built on demand, so there is nothing to bake while you are iterating.
+
+<img width="500" alt="Image" src="https://github.com/user-attachments/assets/c91b9488-f71a-4ac3-a5d3-170fe0e01d38" />
 
 ## Features and settings
 

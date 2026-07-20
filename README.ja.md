@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-<img width="1920" height="1080" alt="Image" src="https://github.com/user-attachments/assets/136cda22-0931-4141-a566-9528d3ca30ca" />
+<img width="720" alt="Image" src="https://github.com/user-attachments/assets/136cda22-0931-4141-a566-9528d3ca30ca" />
 
 **Unity (uGUI) 向けのピクセルフォント描画システムです。**
 
@@ -33,10 +33,15 @@ https://github.com/ruccho/Texpix.git?path=Packages/com.ruccho.texpix#release
 
 1. ピクセルフォントの TTF をプロジェクトにインポートします。
 2. **Assets → Create → Texpix → Font Asset** を作成し、**Source Font** に TTF を割り当て、**Pixel Size** にそのフォント本来のサイズを設定します。ここが最大のポイントで、この値がずれていることがピクセルフォントの表示がぼやける原因です。
+
+<img width="500" alt="Image" src="https://github.com/user-attachments/assets/4d1152d3-8541-474d-a768-f4071525969f" />
+
 3. Canvas の下に **GameObject → UI → Texpix Text** を作成します。
 4. フォントアセットを割り当ててテキストを入力し、**Pixel Scale** にフォント1ピクセルが占めるキャンバス単位数を設定します。整数（1, 2, 3, …）にしてください。
 
 アトラスは必要に応じて動的に構築されるため、制作中にベイクする必要はありません。
+
+<img width="500" alt="Image" src="https://github.com/user-attachments/assets/c91b9488-f71a-4ac3-a5d3-170fe0e01d38" />
 
 ## 機能と設定項目
 
