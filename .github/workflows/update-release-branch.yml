@@ -1,7 +1,7 @@
 # Fast-forward release branch to the latest release commit
 on:
   release:
-    types: [released]
+    types: [released, prereleased]
   workflow_dispatch:
 name: Update release branch
 jobs:
