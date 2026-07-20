@@ -1,0 +1,14 @@
+{
+  "name": "com.ruccho.texpix",
+  "displayName": "Texpix",
+  "version": "0.1.0",
+  "unity": "6000.3",
+  "unityRelease": "0f1",
+  "dependencies": {
+    "com.unity.test-framework": "1.6.0"
+  },
+  "author": {
+    "name": "ruccho",
+    "url": "https://ruccho.com"
+  }
+}

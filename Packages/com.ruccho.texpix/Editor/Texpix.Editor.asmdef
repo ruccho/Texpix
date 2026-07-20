@@ -1,0 +1,18 @@
+{
+    "name": "Texpix.Editor",
+    "rootNamespace": "Texpix.Editor",
+    "references": [
+        "GUID:92e284440aac39a49856e7a353520460"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
