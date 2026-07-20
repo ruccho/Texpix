@@ -35,7 +35,7 @@ namespace Texpix
         private static readonly int SOutlineColorId = Shader.PropertyToID("_OutlineColor");
         private static readonly int SOutlineModeId = Shader.PropertyToID("_OutlineMode");
         [SerializeField] private TexpixFontAsset font;
-        [SerializeField] [TextArea(1, 10)] private string text = "";
+        [SerializeField] [TextArea(3, 10)] private string text = "";
         [SerializeField] [Min(0.01f)] private float pixelScale = 1f;
         [SerializeField] private TexpixHorizontalAlignment horizontalAlignment = TexpixHorizontalAlignment.Left;
         [SerializeField] private TexpixVerticalAlignment verticalAlignment = TexpixVerticalAlignment.Top;
