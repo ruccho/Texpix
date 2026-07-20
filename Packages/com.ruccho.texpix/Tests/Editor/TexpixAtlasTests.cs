@@ -1,5 +1,5 @@
+using System.Collections.Generic;
 using NUnit.Framework;
-using Texpix;
 using UnityEngine;
 
 namespace Texpix.Tests
@@ -18,10 +18,10 @@ namespace Texpix.Tests
         public void AllocatedCells_HaveDistinctAlignedOrigins()
         {
             using var atlas = new TexpixAtlas(8, 8, 32, 16);
-            var seen = new System.Collections.Generic.HashSet<Vector2Int>();
-            for (int i = 0; i < 8; i++)
+            var seen = new HashSet<Vector2Int>();
+            for (var i = 0; i < 8; i++)
             {
-                Assert.That(atlas.TryAllocateCell(out _, out Vector2Int origin), Is.True);
+                Assert.That(atlas.TryAllocateCell(out _, out var origin), Is.True);
                 Assert.That(origin.x % 4, Is.EqualTo(0));
                 Assert.That(seen.Add(origin), Is.True, $"duplicate origin {origin}");
             }
@@ -31,7 +31,7 @@ namespace Texpix.Tests
         public void Atlas_GrowsHeight_WhenFull()
         {
             using var atlas = new TexpixAtlas(8, 8, 16, 8, 64);
-            int initialHeight = atlas.HeightPx;
+            var initialHeight = atlas.HeightPx;
             var initialTexture = atlas.Texture;
 
             // 16x8 atlas with 8x8 cells = 2 cells; the 3rd forces growth.
@@ -47,7 +47,7 @@ namespace Texpix.Tests
         public void Growth_PreservesWrittenData()
         {
             using var atlas = new TexpixAtlas(8, 8, 16, 8, 64);
-            atlas.TryAllocateCell(out _, out Vector2Int origin);
+            atlas.TryAllocateCell(out _, out var origin);
             var levels = new byte[] { 3, 2, 1, 0 };
             atlas.WriteGlyph(origin, levels, 2, 2);
 
@@ -64,7 +64,7 @@ namespace Texpix.Tests
         public void WriteGlyph_PacksTwoBitsPerPixel()
         {
             using var atlas = new TexpixAtlas(8, 8, 16, 8);
-            atlas.TryAllocateCell(out _, out Vector2Int origin);
+            atlas.TryAllocateCell(out _, out var origin);
             Assert.That(origin, Is.EqualTo(Vector2Int.zero));
 
             // One row: levels 3,2,1,0 → byte 0b00_01_10_11 = 0x1B.
@@ -77,10 +77,10 @@ namespace Texpix.Tests
         public void ReleasedCell_IsReused()
         {
             using var atlas = new TexpixAtlas(8, 8, 32, 16);
-            atlas.TryAllocateCell(out int first, out Vector2Int firstOrigin);
+            atlas.TryAllocateCell(out var first, out var firstOrigin);
             atlas.TryAllocateCell(out _, out _);
             atlas.ReleaseCell(first);
-            atlas.TryAllocateCell(out int reused, out Vector2Int reusedOrigin);
+            atlas.TryAllocateCell(out var reused, out var reusedOrigin);
             Assert.That(reused, Is.EqualTo(first));
             Assert.That(reusedOrigin, Is.EqualTo(firstOrigin));
         }

@@ -1,5 +1,4 @@
 using NUnit.Framework;
-using Texpix;
 using UnityEngine;
 
 namespace Texpix.Tests
@@ -9,14 +8,14 @@ namespace Texpix.Tests
         [Test]
         public void Bake_ProducesStaticAssetServingGlyphs()
         {
-            Font osFont = Font.CreateDynamicFontFromOSFont("Arial", 16);
+            var osFont = Font.CreateDynamicFontFromOSFont("Arial", 16);
             if (osFont == null)
             {
                 Assert.Ignore("Arial not available on this system.");
                 return;
             }
 
-            TexpixFontAsset asset = TexpixFontAsset.Create(osFont, 16);
+            var asset = TexpixFontAsset.Create(osFont, 16);
             try
             {
                 asset.Bake("AB");
@@ -26,7 +25,7 @@ namespace Texpix.Tests
                 Assert.That(asset.AtlasTexture, Is.Not.Null);
 
                 // Baked glyphs resolve without a live FontEngine face.
-                Assert.That(asset.TryGetGlyph('A', out TexpixGlyph a), Is.True);
+                Assert.That(asset.TryGetGlyph('A', out var a), Is.True);
                 Assert.That(a.HasBitmap, Is.True);
                 Assert.That(asset.TryGetGlyph('B', out _), Is.True);
                 // Not baked and static → no dynamic fallback.

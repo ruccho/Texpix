@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -22,14 +21,16 @@ namespace Texpix.Editor
                 // advance = width; adjust per entry afterwards.
                 if (GUILayout.Button("Import Entries From Texture Sprites"))
                 {
-                    string path = AssetDatabase.GetAssetPath(asset.Texture);
-                    List<Sprite> sprites = AssetDatabase.LoadAllAssetsAtPath(path)
+                    var path = AssetDatabase.GetAssetPath(asset.Texture);
+                    var sprites = AssetDatabase.LoadAllAssetsAtPath(path)
                         .OfType<Sprite>()
                         .OrderBy(s => s.name)
                         .ToList();
                     if (sprites.Count == 0)
                     {
-                        Debug.LogWarning($"Texpix: no Sprite sub-assets found in '{path}'. Set the texture's Sprite Mode to Multiple and slice it first.", asset);
+                        Debug.LogWarning(
+                            $"Texpix: no Sprite sub-assets found in '{path}'. Set the texture's Sprite Mode to Multiple and slice it first.",
+                            asset);
                     }
                     else
                     {
@@ -42,7 +43,7 @@ namespace Texpix.Editor
                             height = Mathf.RoundToInt(s.rect.height),
                             bearingX = 0,
                             bearingY = Mathf.RoundToInt(s.rect.height),
-                            advance = Mathf.RoundToInt(s.rect.width) + 1,
+                            advance = Mathf.RoundToInt(s.rect.width) + 1
                         }).ToArray();
                         Undo.RecordObject(asset, "Import Texpix Sprite Entries");
                         asset.SetEntries(entries);

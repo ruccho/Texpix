@@ -1,3 +1,4 @@
+using System;
 using UnityEditor;
 using UnityEngine;
 
@@ -18,31 +19,31 @@ namespace Texpix.Editor
             using (new EditorGUI.DisabledScope(asset.SourceFont == null))
             {
                 if (GUILayout.Button("Bake Static Atlas"))
-                {
                     try
                     {
                         asset.Bake();
                     }
-                    catch (System.Exception e)
+                    catch (Exception e)
                     {
                         Debug.LogError($"Texpix bake failed: {e.Message}", asset);
                     }
-                }
             }
 
-            Texture2D baked = asset.BakedAtlasTextureForInspector;
+            var baked = asset.BakedAtlasTextureForInspector;
             if (baked != null)
             {
-                EditorGUILayout.LabelField($"Baked: {asset.BakedGlyphCount} glyphs, {asset.BakedKerningCount} kerning pairs, atlas {baked.width * 4}x{baked.height}px (R8 {baked.width}x{baked.height})");
+                EditorGUILayout.LabelField(
+                    $"Baked: {asset.BakedGlyphCount} glyphs, {asset.BakedKerningCount} kerning pairs, atlas {baked.width * 4}x{baked.height}px (R8 {baked.width}x{baked.height})");
                 if (GUILayout.Button("Clear Baked Data"))
                     asset.ClearBaked();
 
-                Rect rect = GUILayoutUtility.GetRect(128, 128, GUILayout.ExpandWidth(false));
+                var rect = GUILayoutUtility.GetRect(128, 128, GUILayout.ExpandWidth(false));
                 EditorGUI.DrawPreviewTexture(rect, baked, null, ScaleMode.ScaleToFit);
             }
             else if (asset.AtlasMode == TexpixAtlasMode.Static)
             {
-                EditorGUILayout.HelpBox("Atlas mode is Static but no baked data exists. Bake or switch to Dynamic.", MessageType.Warning);
+                EditorGUILayout.HelpBox("Atlas mode is Static but no baked data exists. Bake or switch to Dynamic.",
+                    MessageType.Warning);
             }
         }
     }

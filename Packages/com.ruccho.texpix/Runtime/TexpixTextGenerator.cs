@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -7,116 +8,102 @@ namespace Texpix
     {
         Left = 0,
         Center = 1,
-        Right = 2,
+        Right = 2
     }
 
     public enum TexpixVerticalAlignment
     {
         Top = 0,
         Middle = 1,
-        Bottom = 2,
+        Bottom = 2
     }
 
     public enum TexpixWrapMode
     {
         NoWrap = 0,
-        Wrap = 1,
+        Wrap = 1
     }
 
     public enum TexpixOverflowMode
     {
         Overflow = 0,
         Truncate = 1,
-        Ellipsis = 2,
+        Ellipsis = 2
     }
 
     /// <summary>Layout constraints in integer font pixels. Non-positive sizes mean unconstrained.</summary>
     public struct TexpixLayoutSettings
     {
-        public int maxWidthPx;
-        public int maxHeightPx;
-        public TexpixHorizontalAlignment horizontalAlignment;
-        public TexpixVerticalAlignment verticalAlignment;
-        public TexpixWrapMode wrapMode;
-        public TexpixOverflowMode overflow;
+        public int MaxWidthPx;
+        public int MaxHeightPx;
+        public TexpixHorizontalAlignment HorizontalAlignment;
+        public TexpixVerticalAlignment VerticalAlignment;
+        public TexpixWrapMode WrapMode;
+        public TexpixOverflowMode Overflow;
+
         /// <summary>Enables the minimal tag set: color, sprite, noparse, br.</summary>
-        public bool richText;
+        public bool RichText;
+
         /// <summary>Sprite source for &lt;sprite=...&gt; tags (may be null).</summary>
-        public TexpixSpriteAsset spriteAsset;
+        public TexpixSpriteAsset SpriteAsset;
     }
 
     public struct TexpixTextMetrics
     {
-        public int lineCount;
-        public int widthPx;
-        public int heightPx;
+        public int LineCount;
+        public int WidthPx;
+        public int HeightPx;
     }
 
     /// <summary>A positioned quad in font-pixel space (y-up, layout origin at the rect's top-left).</summary>
     public struct TexpixQuad
     {
-        public int x;
-        public int y;
-        public int width;
-        public int height;
-        public int atlasX;
-        public int atlasY;
+        public int X;
+        public int Y;
+        public int Width;
+        public int Height;
+        public int AtlasX;
+        public int AtlasY;
+
         /// <summary>Per-quad tint (rich text color); multiplied with the component color.</summary>
-        public Color32 color;
+        public Color32 Color;
+
         /// <summary>Fallback-chain index of the atlas this quad samples (0 = primary font).</summary>
-        public int fontIndex;
+        public int FontIndex;
     }
 
     /// <summary>
-    /// Text layout in integer font-pixel space: word wrap (with CJK character wrap
-    /// and basic kinsoku rules), 9-way alignment, overflow modes, kerning,
-    /// surrogate pairs, replacement character for missing glyphs, and a minimal
-    /// rich-text tag set (color / sprite / noparse / br).
-    /// Glyph quads and sprite quads are emitted to separate lists because they
-    /// sample different textures.
-    /// Output coordinates are y-up with the origin at the layout rect's top-left
-    /// corner; content extends toward negative y.
+    ///     Text layout in integer font-pixel space: word wrap (with CJK character wrap
+    ///     and basic kinsoku rules), 9-way alignment, overflow modes, kerning,
+    ///     surrogate pairs, replacement character for missing glyphs, and a minimal
+    ///     rich-text tag set (color / sprite / noparse / br).
+    ///     Glyph quads and sprite quads are emitted to separate lists because they
+    ///     sample different textures.
+    ///     Output coordinates are y-up with the origin at the layout rect's top-left
+    ///     corner; content extends toward negative y.
     /// </summary>
     public static class TexpixTextGenerator
     {
-        const int EllipsisCodepoint = 0x2026;
-        const uint ReplacementCodepoint = 0xFFFD;
-        const int MaxTagLength = 100;
+        private const int EllipsisCodepoint = 0x2026;
+        private const uint ReplacementCodepoint = 0xFFFD;
+        private const int MaxTagLength = 100;
 
         // Basic kinsoku sets (BMP only).
-        const string LineStartProhibited = "、。，．,.:;：；!！?？)]}）］｝〉》」』〕〗ゝゞ々ーぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ・…‥％%℃";
-        const string LineEndProhibited = "([{（［｛〈《「『〔〖";
+        private const string LineStartProhibited = "、。，．,.:;：；!！?？)]}）］｝〉》」』〕〗ゝゞ々ーぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ・…‥％%℃";
+        private const string LineEndProhibited = "([{（［｛〈《「『〔〖";
 
-        static readonly Color32 White = new(255, 255, 255, 255);
+        private static readonly Color32 White = new(255, 255, 255, 255);
 
-        struct Item
+        private static readonly List<Item> SItems = new();
+        private static readonly List<Line> SLines = new();
+        private static readonly List<TexpixGlyph> SEllipsisGlyphs = new();
+        private static readonly List<Color32> SColorStack = new();
+
+        public static TexpixTextMetrics Generate(ITexpixFontSource font, string text, in TexpixLayoutSettings settings,
+            List<TexpixQuad> quads)
         {
-            public int codepoint;
-            public TexpixGlyph glyph;
-            public Color32 color;
-            public bool whitespace;
-            public bool newline;
-            public bool sprite;
+            return Generate(font, text, in settings, quads, null);
         }
-
-        struct Line
-        {
-            public int start;
-            public int end;
-            /// <summary>Visual width used for alignment (trimmed; includes ellipsis when present).</summary>
-            public int width;
-            public bool ellipsis;
-            /// <summary>Pen position where the ellipsis starts when <see cref="ellipsis"/> is set.</summary>
-            public int ellipsisPen;
-        }
-
-        static readonly List<Item> s_Items = new();
-        static readonly List<Line> s_Lines = new();
-        static readonly List<TexpixGlyph> s_EllipsisGlyphs = new();
-        static readonly List<Color32> s_ColorStack = new();
-
-        public static TexpixTextMetrics Generate(ITexpixFontSource font, string text, in TexpixLayoutSettings settings, List<TexpixQuad> quads)
-            => Generate(font, text, in settings, quads, null);
 
         public static TexpixTextMetrics Generate(ITexpixFontSource font, string text, in TexpixLayoutSettings settings,
             List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
@@ -124,85 +111,83 @@ namespace Texpix
             quads.Clear();
             spriteQuads?.Clear();
             Shape(font, text ?? "", in settings);
-            BreakLines(font, settings.maxWidthPx, settings.wrapMode == TexpixWrapMode.Wrap);
+            BreakLines(font, settings.MaxWidthPx, settings.WrapMode == TexpixWrapMode.Wrap);
 
-            int ascent = font.Ascent;
-            int descent = font.Descent;
-            int lineHeight = font.LineHeight;
-            int singleLineHeight = ascent - descent;
+            var ascent = font.Ascent;
+            var descent = font.Descent;
+            var lineHeight = font.LineHeight;
+            var singleLineHeight = ascent - descent;
 
             // Vertical overflow: number of lines that fit the rect (always at least one).
-            int visibleLines = s_Lines.Count;
-            if (settings.overflow != TexpixOverflowMode.Overflow && settings.maxHeightPx > 0)
+            var visibleLines = SLines.Count;
+            if (settings.Overflow != TexpixOverflowMode.Overflow && settings.MaxHeightPx > 0)
             {
-                int capacity = 1 + Mathf.Max(0, (settings.maxHeightPx - singleLineHeight) / Mathf.Max(1, lineHeight));
+                var capacity = 1 + Mathf.Max(0, (settings.MaxHeightPx - singleLineHeight) / Mathf.Max(1, lineHeight));
                 visibleLines = Mathf.Min(visibleLines, Mathf.Max(1, capacity));
             }
-            bool verticallyTruncated = visibleLines < s_Lines.Count;
 
-            if (settings.overflow != TexpixOverflowMode.Overflow)
+            var verticallyTruncated = visibleLines < SLines.Count;
+
+            if (settings.Overflow != TexpixOverflowMode.Overflow)
                 TrimForOverflow(font, settings, visibleLines, verticallyTruncated);
 
             // Vertical alignment offset from the rect top (positive = downward).
-            int blockHeight = (visibleLines - 1) * lineHeight + singleLineHeight;
-            int top = 0;
-            if (settings.maxHeightPx > 0)
-            {
-                switch (settings.verticalAlignment)
+            var blockHeight = (visibleLines - 1) * lineHeight + singleLineHeight;
+            var top = 0;
+            if (settings.MaxHeightPx > 0)
+                switch (settings.VerticalAlignment)
                 {
                     case TexpixVerticalAlignment.Middle:
-                        top = (settings.maxHeightPx - blockHeight) / 2;
+                        top = (settings.MaxHeightPx - blockHeight) / 2;
                         break;
                     case TexpixVerticalAlignment.Bottom:
-                        top = settings.maxHeightPx - blockHeight;
+                        top = settings.MaxHeightPx - blockHeight;
                         break;
                 }
-            }
 
-            int maxLineWidth = 0;
-            for (int k = 0; k < visibleLines; k++)
+            var maxLineWidth = 0;
+            for (var k = 0; k < visibleLines; k++)
             {
-                Line line = s_Lines[k];
-                maxLineWidth = Mathf.Max(maxLineWidth, line.width);
+                var line = SLines[k];
+                maxLineWidth = Mathf.Max(maxLineWidth, line.Width);
 
-                int xOffset = 0;
-                if (settings.maxWidthPx > 0)
-                {
-                    switch (settings.horizontalAlignment)
+                var xOffset = 0;
+                if (settings.MaxWidthPx > 0)
+                    switch (settings.HorizontalAlignment)
                     {
                         case TexpixHorizontalAlignment.Center:
-                            xOffset = (settings.maxWidthPx - line.width) / 2;
+                            xOffset = (settings.MaxWidthPx - line.Width) / 2;
                             break;
                         case TexpixHorizontalAlignment.Right:
-                            xOffset = settings.maxWidthPx - line.width;
+                            xOffset = settings.MaxWidthPx - line.Width;
                             break;
                     }
-                }
 
-                int baseline = -(top + ascent + k * lineHeight);
+                var baseline = -(top + ascent + k * lineHeight);
                 EmitLine(font, line, xOffset, baseline, quads, spriteQuads);
             }
 
             return new TexpixTextMetrics
             {
-                lineCount = visibleLines,
-                widthPx = maxLineWidth,
-                heightPx = blockHeight,
+                LineCount = visibleLines,
+                WidthPx = maxLineWidth,
+                HeightPx = blockHeight
             };
         }
 
-        static void Shape(ITexpixFontSource font, string text, in TexpixLayoutSettings settings)
+        private static void Shape(ITexpixFontSource font, string text, in TexpixLayoutSettings settings)
         {
-            s_Items.Clear();
-            s_ColorStack.Clear();
-            Color32 currentColor = White;
-            bool noparse = false;
+            SItems.Clear();
+            SColorStack.Clear();
+            var currentColor = White;
+            var noparse = false;
 
-            for (int i = 0; i < text.Length; i++)
+            for (var i = 0; i < text.Length; i++)
             {
-                char c = text[i];
+                var c = text[i];
 
-                if (settings.richText && c == '<' && TryHandleTag(text, ref i, ref currentColor, ref noparse, in settings))
+                if (settings.RichText && c == '<' &&
+                    TryHandleTag(text, ref i, ref currentColor, ref noparse, in settings))
                     continue;
 
                 int cp = c;
@@ -214,33 +199,35 @@ namespace Texpix
 
                 if (cp == '\n')
                 {
-                    s_Items.Add(new Item { codepoint = cp, newline = true });
+                    SItems.Add(new Item { Codepoint = cp, Newline = true });
                     continue;
                 }
+
                 if (cp < 0x20 || cp == 0x7F)
                     continue;
 
-                if (!font.TryGetGlyph((uint)cp, out TexpixGlyph glyph) &&
+                if (!font.TryGetGlyph((uint)cp, out var glyph) &&
                     !font.TryGetGlyph(ReplacementCodepoint, out glyph))
                     continue;
 
-                bool whitespace = cp == ' ' || cp == 0x3000;
-                s_Items.Add(new Item { codepoint = cp, glyph = glyph, color = currentColor, whitespace = whitespace });
+                var whitespace = cp == ' ' || cp == 0x3000;
+                SItems.Add(new Item { Codepoint = cp, Glyph = glyph, Color = currentColor, Whitespace = whitespace });
             }
         }
 
         /// <summary>
-        /// Handles the tag starting at text[i] ('&lt;'). On success, i is advanced to
-        /// the closing '&gt;'. Returns false for unrecognized tags, which then render
-        /// literally.
+        ///     Handles the tag starting at text[i] ('&lt;'). On success, i is advanced to
+        ///     the closing '&gt;'. Returns false for unrecognized tags, which then render
+        ///     literally.
         /// </summary>
-        static bool TryHandleTag(string text, ref int i, ref Color32 currentColor, ref bool noparse, in TexpixLayoutSettings settings)
+        private static bool TryHandleTag(string text, ref int i, ref Color32 currentColor, ref bool noparse,
+            in TexpixLayoutSettings settings)
         {
-            int close = text.IndexOf('>', i + 1);
+            var close = text.IndexOf('>', i + 1);
             if (close < 0 || close - i > MaxTagLength)
                 return false;
 
-            string tag = text.Substring(i + 1, close - i - 1);
+            var tag = text.Substring(i + 1, close - i - 1);
 
             if (noparse)
             {
@@ -258,39 +245,40 @@ namespace Texpix
                     i = close;
                     return true;
                 case "br":
-                    s_Items.Add(new Item { codepoint = '\n', newline = true });
+                    SItems.Add(new Item { Codepoint = '\n', Newline = true });
                     i = close;
                     return true;
                 case "/color":
-                    if (s_ColorStack.Count > 0)
+                    if (SColorStack.Count > 0)
                     {
-                        currentColor = s_ColorStack[^1];
-                        s_ColorStack.RemoveAt(s_ColorStack.Count - 1);
+                        currentColor = SColorStack[^1];
+                        SColorStack.RemoveAt(SColorStack.Count - 1);
                     }
+
                     i = close;
                     return true;
             }
 
-            if (tag.StartsWith("color=", System.StringComparison.Ordinal))
+            if (tag.StartsWith("color=", StringComparison.Ordinal))
             {
-                string value = tag.Substring(6).Trim('"');
-                if (!ColorUtility.TryParseHtmlString(value, out Color parsed))
+                var value = tag.Substring(6).Trim('"');
+                if (!ColorUtility.TryParseHtmlString(value, out var parsed))
                     return false;
-                s_ColorStack.Add(currentColor);
+                SColorStack.Add(currentColor);
                 currentColor = parsed;
                 i = close;
                 return true;
             }
 
-            if (tag.StartsWith("sprite", System.StringComparison.Ordinal))
+            if (tag.StartsWith("sprite", StringComparison.Ordinal))
             {
-                if (settings.spriteAsset == null)
+                if (settings.SpriteAsset == null)
                     return false;
 
                 // Optional attribute: <sprite=name tint=1> tints with the current rich-text color.
-                string spec = tag;
-                bool tint = false;
-                int tintAt = spec.IndexOf(" tint=1", System.StringComparison.Ordinal);
+                var spec = tag;
+                var tint = false;
+                var tintAt = spec.IndexOf(" tint=1", StringComparison.Ordinal);
                 if (tintAt >= 0)
                 {
                     tint = true;
@@ -299,33 +287,33 @@ namespace Texpix
 
                 TexpixSpriteAsset.Entry entry;
                 bool found;
-                if (spec.StartsWith("sprite=", System.StringComparison.Ordinal))
-                    found = settings.spriteAsset.TryGetEntry(spec.Substring(7).Trim('"'), out entry);
-                else if (spec.StartsWith("sprite index=", System.StringComparison.Ordinal) &&
-                         int.TryParse(spec.Substring(13), out int index))
-                    found = settings.spriteAsset.TryGetEntry(index, out entry);
+                if (spec.StartsWith("sprite=", StringComparison.Ordinal))
+                    found = settings.SpriteAsset.TryGetEntry(spec.Substring(7).Trim('"'), out entry);
+                else if (spec.StartsWith("sprite index=", StringComparison.Ordinal) &&
+                         int.TryParse(spec.Substring(13), out var index))
+                    found = settings.SpriteAsset.TryGetEntry(index, out entry);
                 else
                     return false;
 
                 if (!found)
                     return false;
 
-                s_Items.Add(new Item
+                SItems.Add(new Item
                 {
-                    codepoint = 0,
-                    sprite = true,
-                    color = tint ? currentColor : White,
-                    glyph = new TexpixGlyph
+                    Codepoint = 0,
+                    Sprite = true,
+                    Color = tint ? currentColor : White,
+                    Glyph = new TexpixGlyph
                     {
-                        atlasX = entry.x,
-                        atlasY = entry.y,
-                        width = entry.width,
-                        height = entry.height,
-                        bearingX = entry.bearingX,
-                        bearingY = entry.bearingY,
-                        advance = entry.advance,
-                        valid = true,
-                    },
+                        AtlasX = entry.x,
+                        AtlasY = entry.y,
+                        Width = entry.width,
+                        Height = entry.height,
+                        BearingX = entry.bearingX,
+                        BearingY = entry.bearingY,
+                        Advance = entry.advance,
+                        Valid = true
+                    }
                 });
                 i = close;
                 return true;
@@ -334,22 +322,22 @@ namespace Texpix
             return false;
         }
 
-        static void BreakLines(ITexpixFontSource font, int maxWidth, bool wrap)
+        private static void BreakLines(ITexpixFontSource font, int maxWidth, bool wrap)
         {
-            s_Lines.Clear();
-            int count = s_Items.Count;
-            int lineStart = 0;
-            bool skipLeadingWhitespace = false;
-            bool lineHasContent = false;
-            int pen = 0;
-            int trimmedPen = 0; // pen at the end of the last non-whitespace item
-            int breakIndex = -1;
-            int breakPen = 0;
+            SLines.Clear();
+            var count = SItems.Count;
+            var lineStart = 0;
+            var skipLeadingWhitespace = false;
+            var lineHasContent = false;
+            var pen = 0;
+            var trimmedPen = 0; // pen at the end of the last non-whitespace item
+            var breakIndex = -1;
+            var breakPen = 0;
             uint previousGlyphIndex = 0;
 
             void EndLine(int end, int width, int nextStart, bool skipWhitespace)
             {
-                s_Lines.Add(new Line { start = lineStart, end = end, width = width });
+                SLines.Add(new Line { Start = lineStart, End = end, Width = width });
                 lineStart = nextStart;
                 pen = 0;
                 trimmedPen = 0;
@@ -359,37 +347,38 @@ namespace Texpix
                 skipLeadingWhitespace = skipWhitespace;
             }
 
-            int i = 0;
+            var i = 0;
             while (i < count)
             {
-                Item item = s_Items[i];
+                var item = SItems[i];
 
-                if (item.newline)
+                if (item.Newline)
                 {
                     EndLine(i, trimmedPen, i + 1, false);
                     i++;
                     continue;
                 }
 
-                if (skipLeadingWhitespace && item.whitespace && !lineHasContent)
+                if (skipLeadingWhitespace && item.Whitespace && !lineHasContent)
                 {
                     lineStart = i + 1;
                     i++;
                     continue;
                 }
 
-                int kern = previousGlyphIndex != 0 && item.glyph.glyphIndex != 0 && item.glyph.sourceFontIndex == 0
-                    ? font.GetKerning(previousGlyphIndex, item.glyph.glyphIndex)
+                var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
+                    ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                     : 0;
-                int newPen = pen + kern + item.glyph.advance;
+                var newPen = pen + kern + item.Glyph.Advance;
 
-                if (lineHasContent && !item.whitespace && i > lineStart)
+                if (lineHasContent && !item.Whitespace && i > lineStart)
                 {
-                    Item previous = s_Items[i - 1];
-                    bool canBreak = previous.whitespace ||
-                        ((previous.sprite || item.sprite || IsCjk(previous.codepoint) || IsCjk(item.codepoint)) &&
-                         !IsLineEndProhibited(previous.codepoint) &&
-                         !IsLineStartProhibited(item.codepoint));
+                    var previous = SItems[i - 1];
+                    var canBreak = previous.Whitespace ||
+                                   ((previous.Sprite || item.Sprite || IsCjk(previous.Codepoint) ||
+                                     IsCjk(item.Codepoint)) &&
+                                    !IsLineEndProhibited(previous.Codepoint) &&
+                                    !IsLineStartProhibited(item.Codepoint));
                     if (canBreak)
                     {
                         breakIndex = i;
@@ -397,12 +386,12 @@ namespace Texpix
                     }
                 }
 
-                if (wrap && maxWidth > 0 && !item.whitespace && newPen > maxWidth && lineHasContent)
+                if (wrap && maxWidth > 0 && !item.Whitespace && newPen > maxWidth && lineHasContent)
                 {
                     if (breakIndex > lineStart)
                     {
                         // EndLine resets breakIndex; keep the resume position first.
-                        int resumeAt = breakIndex;
+                        var resumeAt = breakIndex;
                         EndLine(resumeAt, breakPen, resumeAt, true);
                         i = resumeAt;
                     }
@@ -411,59 +400,62 @@ namespace Texpix
                         // No break opportunity: break mid-word before the current item.
                         EndLine(i, trimmedPen, i, true);
                     }
+
                     continue;
                 }
 
                 pen = newPen;
-                if (!item.whitespace)
+                if (!item.Whitespace)
                 {
                     trimmedPen = pen;
                     lineHasContent = true;
                 }
+
                 // Kerning only applies between glyphs of the primary font; a fallback
                 // glyph breaks the pair.
-                previousGlyphIndex = item.glyph.sourceFontIndex == 0 ? item.glyph.glyphIndex : 0;
+                previousGlyphIndex = item.Glyph.SourceFontIndex == 0 ? item.Glyph.GlyphIndex : 0;
                 i++;
             }
 
             EndLine(count, trimmedPen, count, false);
         }
 
-        static void TrimForOverflow(ITexpixFontSource font, in TexpixLayoutSettings settings, int visibleLines, bool verticallyTruncated)
+        private static void TrimForOverflow(ITexpixFontSource font, in TexpixLayoutSettings settings, int visibleLines,
+            bool verticallyTruncated)
         {
-            bool ellipsisMode = settings.overflow == TexpixOverflowMode.Ellipsis;
-            int ellipsisWidth = ellipsisMode ? BuildEllipsis(font) : 0;
+            var ellipsisMode = settings.Overflow == TexpixOverflowMode.Ellipsis;
+            var ellipsisWidth = ellipsisMode ? BuildEllipsis(font) : 0;
 
-            for (int k = 0; k < visibleLines; k++)
+            for (var k = 0; k < visibleLines; k++)
             {
-                Line line = s_Lines[k];
-                bool exceedsWidth = settings.maxWidthPx > 0 && line.width > settings.maxWidthPx;
-                bool isLastVisible = k == visibleLines - 1;
-                bool needsEllipsis = ellipsisMode && s_EllipsisGlyphs.Count > 0 &&
-                    (exceedsWidth || (isLastVisible && verticallyTruncated));
+                var line = SLines[k];
+                var exceedsWidth = settings.MaxWidthPx > 0 && line.Width > settings.MaxWidthPx;
+                var isLastVisible = k == visibleLines - 1;
+                var needsEllipsis = ellipsisMode && SEllipsisGlyphs.Count > 0 &&
+                                    (exceedsWidth || (isLastVisible && verticallyTruncated));
 
                 if (!exceedsWidth && !needsEllipsis)
                     continue;
 
-                int budget = settings.maxWidthPx > 0 ? settings.maxWidthPx : int.MaxValue;
-                int reserved = needsEllipsis ? ellipsisWidth : 0;
+                var budget = settings.MaxWidthPx > 0 ? settings.MaxWidthPx : int.MaxValue;
+                var reserved = needsEllipsis ? ellipsisWidth : 0;
 
                 // Longest prefix whose trimmed width plus the ellipsis fits the budget.
-                int pen = 0;
-                int cutEnd = line.start;
-                int cutPen = 0;
+                var pen = 0;
+                var cutEnd = line.Start;
+                var cutPen = 0;
                 uint previousGlyphIndex = 0;
-                for (int i = line.start; i < line.end; i++)
+                for (var i = line.Start; i < line.End; i++)
                 {
-                    Item item = s_Items[i];
-                    int kern = previousGlyphIndex != 0 && item.glyph.glyphIndex != 0 && item.glyph.sourceFontIndex == 0
-                        ? font.GetKerning(previousGlyphIndex, item.glyph.glyphIndex)
+                    var item = SItems[i];
+                    var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
+                        ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                         : 0;
-                    pen += kern + item.glyph.advance;
+                    pen += kern + item.Glyph.Advance;
                     // Kerning only applies between glyphs of the primary font; a fallback
-                // glyph breaks the pair.
-                previousGlyphIndex = item.glyph.sourceFontIndex == 0 ? item.glyph.glyphIndex : 0;
-                    if (!item.whitespace)
+                    // glyph breaks the pair.
+                    previousGlyphIndex = item.Glyph.SourceFontIndex == 0 ? item.Glyph.GlyphIndex : 0;
+                    if (!item.Whitespace)
                     {
                         if (pen + reserved > budget)
                             break;
@@ -472,94 +464,132 @@ namespace Texpix
                     }
                 }
 
-                line.end = cutEnd;
-                line.width = cutPen + reserved;
-                line.ellipsis = needsEllipsis;
-                line.ellipsisPen = cutPen;
-                s_Lines[k] = line;
+                line.End = cutEnd;
+                line.Width = cutPen + reserved;
+                line.Ellipsis = needsEllipsis;
+                line.EllipsisPen = cutPen;
+                SLines[k] = line;
             }
         }
 
-        static void EmitLine(ITexpixFontSource font, in Line line, int xOffset, int baseline,
+        private static void EmitLine(ITexpixFontSource font, in Line line, int xOffset, int baseline,
             List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
         {
-            int pen = 0;
+            var pen = 0;
             uint previousGlyphIndex = 0;
-            for (int i = line.start; i < line.end; i++)
+            for (var i = line.Start; i < line.End; i++)
             {
-                Item item = s_Items[i];
-                if (item.newline)
+                var item = SItems[i];
+                if (item.Newline)
                     continue;
-                int kern = previousGlyphIndex != 0 && item.glyph.glyphIndex != 0 && item.glyph.sourceFontIndex == 0
-                    ? font.GetKerning(previousGlyphIndex, item.glyph.glyphIndex)
+                var kern = previousGlyphIndex != 0 && item.Glyph.GlyphIndex != 0 && item.Glyph.SourceFontIndex == 0
+                    ? font.GetKerning(previousGlyphIndex, item.Glyph.GlyphIndex)
                     : 0;
                 pen += kern;
-                if (item.glyph.HasBitmap)
+                if (item.Glyph.HasBitmap)
                 {
-                    var target = item.sprite ? spriteQuads : quads;
+                    var target = item.Sprite ? spriteQuads : quads;
                     if (target != null)
-                        EmitGlyph(item.glyph, xOffset + pen, baseline, item.color, target);
+                        EmitGlyph(item.Glyph, xOffset + pen, baseline, item.Color, target);
                 }
-                pen += item.glyph.advance;
+
+                pen += item.Glyph.Advance;
                 // Kerning only applies between glyphs of the primary font; a fallback
                 // glyph breaks the pair.
-                previousGlyphIndex = item.glyph.sourceFontIndex == 0 ? item.glyph.glyphIndex : 0;
+                previousGlyphIndex = item.Glyph.SourceFontIndex == 0 ? item.Glyph.GlyphIndex : 0;
             }
 
-            if (line.ellipsis)
+            if (line.Ellipsis)
             {
-                pen = line.ellipsisPen;
-                foreach (TexpixGlyph glyph in s_EllipsisGlyphs)
+                pen = line.EllipsisPen;
+                foreach (var glyph in SEllipsisGlyphs)
                 {
                     if (glyph.HasBitmap)
                         EmitGlyph(glyph, xOffset + pen, baseline, White, quads);
-                    pen += glyph.advance;
+                    pen += glyph.Advance;
                 }
             }
         }
 
-        static void EmitGlyph(in TexpixGlyph glyph, int penX, int baseline, Color32 color, List<TexpixQuad> quads)
+        private static void EmitGlyph(in TexpixGlyph glyph, int penX, int baseline, Color32 color,
+            List<TexpixQuad> quads)
         {
             quads.Add(new TexpixQuad
             {
-                x = penX + glyph.bearingX,
-                y = baseline + glyph.bearingY - glyph.height,
-                width = glyph.width,
-                height = glyph.height,
-                atlasX = glyph.atlasX,
-                atlasY = glyph.atlasY,
-                color = color,
-                fontIndex = glyph.sourceFontIndex,
+                X = penX + glyph.BearingX,
+                Y = baseline + glyph.BearingY - glyph.Height,
+                Width = glyph.Width,
+                Height = glyph.Height,
+                AtlasX = glyph.AtlasX,
+                AtlasY = glyph.AtlasY,
+                Color = color,
+                FontIndex = glyph.SourceFontIndex
             });
         }
 
-        static int BuildEllipsis(ITexpixFontSource font)
+        private static int BuildEllipsis(ITexpixFontSource font)
         {
-            s_EllipsisGlyphs.Clear();
-            if (font.TryGetGlyph(EllipsisCodepoint, out TexpixGlyph ellipsis))
+            SEllipsisGlyphs.Clear();
+            if (font.TryGetGlyph(EllipsisCodepoint, out var ellipsis))
             {
-                s_EllipsisGlyphs.Add(ellipsis);
-                return ellipsis.advance;
+                SEllipsisGlyphs.Add(ellipsis);
+                return ellipsis.Advance;
             }
-            if (font.TryGetGlyph('.', out TexpixGlyph dot))
+
+            if (font.TryGetGlyph('.', out var dot))
             {
-                s_EllipsisGlyphs.Add(dot);
-                s_EllipsisGlyphs.Add(dot);
-                s_EllipsisGlyphs.Add(dot);
-                return dot.advance * 3;
+                SEllipsisGlyphs.Add(dot);
+                SEllipsisGlyphs.Add(dot);
+                SEllipsisGlyphs.Add(dot);
+                return dot.Advance * 3;
             }
+
             return 0;
         }
 
-        static bool IsCjk(int cp) =>
-            (cp >= 0x1100 && cp <= 0x11FF) ||   // Hangul jamo
-            (cp >= 0x2E80 && cp <= 0x9FFF) ||   // CJK radicals, kana, punctuation, unified ideographs
-            (cp >= 0xAC00 && cp <= 0xD7AF) ||   // Hangul syllables
-            (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility ideographs
-            (cp >= 0xFF00 && cp <= 0xFF60) ||   // fullwidth forms
-            (cp >= 0x20000 && cp <= 0x2FFFF);   // ideograph extensions
+        private static bool IsCjk(int cp)
+        {
+            return cp is >= 0x1100 and <= 0x11FF || // Hangul jamo
+                   cp is >= 0x2E80 and <= 0x9FFF || // CJK radicals, kana, punctuation, unified ideographs
+                   cp is >= 0xAC00 and <= 0xD7AF || // Hangul syllables
+                   cp is >= 0xF900 and <= 0xFAFF || // CJK compatibility ideographs
+                   cp is >= 0xFF00 and <= 0xFF60 || // fullwidth forms
+                   cp is >= 0x20000 and <= 0x2FFFF;
+            // ideograph extensions
+        }
 
-        static bool IsLineStartProhibited(int cp) => cp > 0 && cp <= 0xFFFF && LineStartProhibited.IndexOf((char)cp) >= 0;
-        static bool IsLineEndProhibited(int cp) => cp > 0 && cp <= 0xFFFF && LineEndProhibited.IndexOf((char)cp) >= 0;
+        private static bool IsLineStartProhibited(int cp)
+        {
+            return cp is > 0 and <= 0xFFFF && LineStartProhibited.IndexOf((char)cp) >= 0;
+        }
+
+        private static bool IsLineEndProhibited(int cp)
+        {
+            return cp is > 0 and <= 0xFFFF && LineEndProhibited.IndexOf((char)cp) >= 0;
+        }
+
+        private struct Item
+        {
+            public int Codepoint;
+            public TexpixGlyph Glyph;
+            public Color32 Color;
+            public bool Whitespace;
+            public bool Newline;
+            public bool Sprite;
+        }
+
+        private struct Line
+        {
+            public int Start;
+            public int End;
+
+            /// <summary>Visual width used for alignment (trimmed; includes ellipsis when present).</summary>
+            public int Width;
+
+            public bool Ellipsis;
+
+            /// <summary>Pen position where the ellipsis starts when <see cref="Ellipsis" /> is set.</summary>
+            public int EllipsisPen;
+        }
     }
 }

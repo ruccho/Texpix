@@ -5,26 +5,40 @@ using UnityEngine.UI;
 namespace Texpix
 {
     /// <summary>
-    /// Child renderer used by <see cref="TexpixText"/> for content that needs a
-    /// different texture/material than the font atlas (inline sprites). Geometry is
-    /// owned by the parent and pushed directly via CanvasRenderer.SetMesh; the
-    /// graphic's own rebuild never generates vertices (SetVerticesDirty is a no-op)
-    /// so the pushed mesh is not clobbered. Masking/stencil behaves like any
-    /// MaskableGraphic.
+    ///     Child renderer used by <see cref="TexpixText" /> for content that needs a
+    ///     different texture/material than the font atlas (inline sprites). Geometry is
+    ///     owned by the parent and pushed directly via CanvasRenderer.SetMesh; the
+    ///     graphic's own rebuild never generates vertices (SetVerticesDirty is a no-op)
+    ///     so the pushed mesh is not clobbered. Masking/stencil behaves like any
+    ///     MaskableGraphic.
     /// </summary>
     [RequireComponent(typeof(CanvasRenderer))]
     public sealed class TexpixSubGraphic : MaskableGraphic
     {
-        Texture texture;
-        Mesh mesh;
+        private Mesh _mesh;
+        private Texture _texture;
 
-        public override Texture mainTexture => texture != null ? texture : s_WhiteTexture;
+        public override Texture mainTexture => _texture != null ? _texture : s_WhiteTexture;
+
+        protected override void OnDestroy()
+        {
+            if (_mesh != null)
+            {
+                if (Application.isPlaying)
+                    Destroy(_mesh);
+                else
+                    DestroyImmediate(_mesh);
+                _mesh = null;
+            }
+
+            base.OnDestroy();
+        }
 
         public void SetTexture(Texture value)
         {
-            if (texture == value)
+            if (_texture == value)
                 return;
-            texture = value;
+            _texture = value;
             SetMaterialDirty();
         }
 
@@ -40,35 +54,22 @@ namespace Texpix
 
         public void UploadMesh(List<Vector3> vertices, List<Color32> colors, List<Vector2> uvs, List<int> indices)
         {
-            if (mesh == null)
-                mesh = new Mesh { name = "Texpix Sprites", hideFlags = HideFlags.HideAndDontSave };
-            mesh.Clear();
-            mesh.SetVertices(vertices);
-            mesh.SetColors(colors);
-            mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(indices, 0, false);
-            canvasRenderer.SetMesh(mesh);
+            if (_mesh == null)
+                _mesh = new Mesh { name = "Texpix Sprites", hideFlags = HideFlags.HideAndDontSave };
+            _mesh.Clear();
+            _mesh.SetVertices(vertices);
+            _mesh.SetColors(colors);
+            _mesh.SetUVs(0, uvs);
+            _mesh.SetTriangles(indices, 0, false);
+            canvasRenderer.SetMesh(_mesh);
         }
 
         public void ClearMesh()
         {
-            if (mesh == null)
+            if (_mesh == null)
                 return;
-            mesh.Clear();
-            canvasRenderer.SetMesh(mesh);
-        }
-
-        protected override void OnDestroy()
-        {
-            if (mesh != null)
-            {
-                if (Application.isPlaying)
-                    Destroy(mesh);
-                else
-                    DestroyImmediate(mesh);
-                mesh = null;
-            }
-            base.OnDestroy();
+            _mesh.Clear();
+            canvasRenderer.SetMesh(_mesh);
         }
     }
 }

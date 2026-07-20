@@ -1,5 +1,4 @@
 using NUnit.Framework;
-using Texpix;
 
 namespace Texpix.Tests
 {
@@ -16,11 +15,11 @@ namespace Texpix.Tests
             // 1 2 1
             // 2 3 2
             // 1 2 1
-            var expected = new byte[]
+            var expected = new[]
             {
                 GlyphClassifier.DiagonalOutline, GlyphClassifier.EdgeOutline, GlyphClassifier.DiagonalOutline,
                 GlyphClassifier.EdgeOutline, GlyphClassifier.Fill, GlyphClassifier.EdgeOutline,
-                GlyphClassifier.DiagonalOutline, GlyphClassifier.EdgeOutline, GlyphClassifier.DiagonalOutline,
+                GlyphClassifier.DiagonalOutline, GlyphClassifier.EdgeOutline, GlyphClassifier.DiagonalOutline
             };
             Assert.That(dst, Is.EqualTo(expected));
         }

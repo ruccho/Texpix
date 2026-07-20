@@ -8,34 +8,39 @@ using UnityEngine.TextCore.LowLevel;
 namespace Texpix
 {
     /// <summary>
-    /// Access to internal <see cref="FontEngine"/> members. Reflection is used only to
-    /// resolve each MethodInfo once; calls go through managed function pointers so there
-    /// is no per-call boxing or argument array allocation.
-    /// Signatures verified on Unity 6000.3 (see docs/notes/fontengine-access.md).
-    /// Newer Unity versions (6000.7+) move these to FontFaceHandle-first overloads;
-    /// binding failures report the expected signature to make that visible.
+    ///     Access to internal <see cref="FontEngine" /> members. Reflection is used only to
+    ///     resolve each MethodInfo once; calls go through managed function pointers so there
+    ///     is no per-call boxing or argument array allocation.
+    ///     Signatures verified on Unity 6000.3 (see docs/notes/fontengine-access.md).
+    ///     Newer Unity versions (6000.7+) move these to FontFaceHandle-first overloads;
+    ///     binding failures report the expected signature to make that visible.
     /// </summary>
     internal static unsafe class FontEngineBridge
     {
-        static bool s_Bound;
+        private static bool _sBound;
 
-        static delegate*<uint, int, GlyphPackingMode, List<GlyphRect>, List<GlyphRect>, GlyphRenderMode, Texture2D, out Glyph, bool> s_TryAddGlyphToTexture;
-        static delegate*<GlyphPairAdjustmentRecord[]> s_GetAllPairAdjustmentRecords;
+        private static delegate*<uint, int, GlyphPackingMode, List<GlyphRect>, List<GlyphRect>, GlyphRenderMode,
+            Texture2D, out Glyph, bool> _sTryAddGlyphToTexture;
+
+        private static delegate*<GlyphPairAdjustmentRecord[]> _sGetAllPairAdjustmentRecords;
 
         public static void EnsureBound()
         {
-            if (s_Bound)
+            if (_sBound)
                 return;
 
-            s_TryAddGlyphToTexture = (delegate*<uint, int, GlyphPackingMode, List<GlyphRect>, List<GlyphRect>, GlyphRenderMode, Texture2D, out Glyph, bool>)
+            _sTryAddGlyphToTexture =
+                (delegate*<uint, int, GlyphPackingMode, List<GlyphRect>, List<GlyphRect>, GlyphRenderMode, Texture2D,
+                    out Glyph, bool>)
                 GetFunctionPointer(Resolve("TryAddGlyphToTexture",
-                    typeof(uint), typeof(int), typeof(GlyphPackingMode), typeof(List<GlyphRect>), typeof(List<GlyphRect>),
+                    typeof(uint), typeof(int), typeof(GlyphPackingMode), typeof(List<GlyphRect>),
+                    typeof(List<GlyphRect>),
                     typeof(GlyphRenderMode), typeof(Texture2D), typeof(Glyph).MakeByRefType()));
 
-            s_GetAllPairAdjustmentRecords = (delegate*<GlyphPairAdjustmentRecord[]>)
+            _sGetAllPairAdjustmentRecords = (delegate*<GlyphPairAdjustmentRecord[]>)
                 GetFunctionPointer(Resolve("GetAllPairAdjustmentRecords"));
 
-            s_Bound = true;
+            _sBound = true;
         }
 
         public static bool TryAddGlyphToTexture(uint glyphIndex, int padding, GlyphPackingMode packingMode,
@@ -43,18 +48,20 @@ namespace Texpix
             Texture2D texture, out Glyph glyph)
         {
             EnsureBound();
-            return s_TryAddGlyphToTexture(glyphIndex, padding, packingMode, freeGlyphRects, usedGlyphRects, renderMode, texture, out glyph);
+            return _sTryAddGlyphToTexture(glyphIndex, padding, packingMode, freeGlyphRects, usedGlyphRects, renderMode,
+                texture, out glyph);
         }
 
         public static GlyphPairAdjustmentRecord[] GetAllPairAdjustmentRecords()
         {
             EnsureBound();
-            return s_GetAllPairAdjustmentRecords();
+            return _sGetAllPairAdjustmentRecords();
         }
 
-        static MethodInfo Resolve(string name, params Type[] signature)
+        private static MethodInfo Resolve(string name, params Type[] signature)
         {
-            var method = typeof(FontEngine).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic, null, signature, null);
+            var method = typeof(FontEngine).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic, null,
+                signature, null);
             if (method == null)
                 throw new MissingMethodException(
                     $"Texpix: internal FontEngine.{name}({string.Join(", ", Array.ConvertAll(signature, t => t.Name))}) " +
@@ -63,7 +70,7 @@ namespace Texpix
             return method;
         }
 
-        static void* GetFunctionPointer(MethodInfo method)
+        private static void* GetFunctionPointer(MethodInfo method)
         {
             return (void*)method.MethodHandle.GetFunctionPointer();
         }
