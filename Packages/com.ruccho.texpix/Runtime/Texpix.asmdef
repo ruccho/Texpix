@@ -1,7 +1,9 @@
 {
     "name": "Texpix",
     "rootNamespace": "Texpix",
-    "references": [],
+    "references": [
+        "UnityEngine.UI"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,

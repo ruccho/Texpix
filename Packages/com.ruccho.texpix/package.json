@@ -10,5 +10,12 @@
   "author": {
     "name": "ruccho",
     "url": "https://ruccho.com"
-  }
+  },
+  "samples": [
+    {
+      "displayName": "Custom Shader",
+      "description": "A custom Texpix text shader built on the public Texpix.hlsl include.",
+      "path": "Samples~/CustomShader"
+    }
+  ]
 }
