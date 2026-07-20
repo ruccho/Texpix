@@ -28,7 +28,7 @@ Use TMP for body text and free scaling. Use Texpix when the font is the art.
 Package Manager → **Add package from git URL…**:
 
 ```
-https://github.com/ruccho/Texpix.git?path=Packages/com.ruccho.texpix
+https://github.com/ruccho/Texpix.git?path=Packages/com.ruccho.texpix#release
 ```
 
 ## Quick start
