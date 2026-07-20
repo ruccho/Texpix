@@ -203,14 +203,14 @@ namespace Texpix
                     continue;
                 }
 
-                if (cp < 0x20 || cp == 0x7F)
+                if (cp is < 0x20 or 0x7F)
                     continue;
 
                 if (!font.TryGetGlyph((uint)cp, out var glyph) &&
                     !font.TryGetGlyph(ReplacementCodepoint, out glyph))
                     continue;
 
-                var whitespace = cp == ' ' || cp == 0x3000;
+                var whitespace = cp is ' ' or 0x3000;
                 SItems.Add(new Item { Codepoint = cp, Glyph = glyph, Color = currentColor, Whitespace = whitespace });
             }
         }

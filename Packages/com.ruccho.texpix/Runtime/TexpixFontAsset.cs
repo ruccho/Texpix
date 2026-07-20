@@ -21,9 +21,6 @@ namespace Texpix
     [CreateAssetMenu(fileName = "TexpixFontAsset", menuName = "Texpix/Font Asset")]
     public sealed class TexpixFontAsset : ScriptableObject, ITexpixFontSource
     {
-        /// <summary>The font face currently loaded into the (global) FontEngine.</summary>
-        private static TexpixFontAsset _sActiveFace;
-
         [SerializeField] private Font sourceFont;
         [SerializeField] [Min(4)] private int pixelSize = 10;
         [SerializeField] private TexpixAtlasMode atlasMode = TexpixAtlasMode.Dynamic;
@@ -229,13 +226,17 @@ namespace Texpix
                 error = FontEngine.LoadFontFace(sourceFont.fontNames[0], "Regular", pixelSize);
             if (error != FontEngineError.Success)
                 throw new InvalidOperationException($"TexpixFontAsset '{name}': LoadFontFace failed with {error}.");
-            _sActiveFace = this;
         }
 
         private void EnsureFaceLoaded()
         {
-            if (_sActiveFace != this)
-                LoadFace();
+            // The FontEngine's current face is process-global and shared with Unity's
+            // own text systems (editor UI text, TMP, other Texpix assets), which can
+            // switch it at any moment between our calls. That makes an "active face"
+            // cache undetectably stale — glyphs would rasterize against the wrong
+            // face — so the face is reloaded before every FontEngine operation.
+            // TextCore caches loaded faces natively; this is a lookup + size set.
+            LoadFace();
         }
 
         private bool TryGetGlyphLocal(uint unicode, out TexpixGlyph glyph)
@@ -401,8 +402,6 @@ namespace Texpix
             _kerning = null;
             _resolvedChain = null;
             _initialized = false;
-            if (_sActiveFace == this)
-                _sActiveFace = null;
         }
 
         [Serializable]
