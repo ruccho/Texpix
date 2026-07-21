@@ -115,15 +115,34 @@ namespace Texpix
         public static TexpixTextMetrics Generate(ITexpixFontSource font, string text, in TexpixLayoutSettings settings,
             List<TexpixQuad> quads)
         {
-            return Generate(font, text, in settings, quads, null);
+            return Generate(font, (text ?? "").AsSpan(), in settings, quads, null);
         }
 
         public static TexpixTextMetrics Generate(ITexpixFontSource font, string text, in TexpixLayoutSettings settings,
             List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
         {
+            return Generate(font, (text ?? "").AsSpan(), in settings, quads, spriteQuads);
+        }
+
+        public static TexpixTextMetrics Generate(ITexpixFontSource font, ReadOnlySpan<char> text,
+            in TexpixLayoutSettings settings, List<TexpixQuad> quads)
+        {
+            return Generate(font, text, in settings, quads, null);
+        }
+
+        /// <summary>
+        ///     Span-based entry point: lets callers feed text from reusable char buffers
+        ///     (counters, timers, ...) without building strings. The text is fully
+        ///     consumed during the call; nothing references it afterwards. Layout and
+        ///     rich-text parsing are allocation-free after warm-up (the only exception
+        ///     is a &lt;color&gt; name outside the built-in HTML set).
+        /// </summary>
+        public static TexpixTextMetrics Generate(ITexpixFontSource font, ReadOnlySpan<char> text,
+            in TexpixLayoutSettings settings, List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
+        {
             quads.Clear();
             spriteQuads?.Clear();
-            Shape(font, text ?? "", in settings);
+            Shape(font, text, in settings);
             BreakLines(font, settings.MaxWidthPx, settings.WrapMode == TexpixWrapMode.Wrap, settings.LetterSpacingPx);
 
             var ascent = font.Ascent;
@@ -188,7 +207,7 @@ namespace Texpix
             };
         }
 
-        private static void Shape(ITexpixFontSource font, string text, in TexpixLayoutSettings settings)
+        private static void Shape(ITexpixFontSource font, ReadOnlySpan<char> text, in TexpixLayoutSettings settings)
         {
             SItems.Clear();
             SColorStack.Clear();
@@ -231,51 +250,58 @@ namespace Texpix
         /// <summary>
         ///     Handles the tag starting at text[i] ('&lt;'). On success, i is advanced to
         ///     the closing '&gt;'. Returns false for unrecognized tags, which then render
-        ///     literally.
+        ///     literally. Parsing is span-based and allocation-free (except the
+        ///     ColorUtility fallback for color names outside the built-in HTML set).
         /// </summary>
-        private static bool TryHandleTag(string text, ref int i, ref Color32 currentColor, ref bool noparse,
+        private static bool TryHandleTag(ReadOnlySpan<char> text, ref int i, ref Color32 currentColor, ref bool noparse,
             in TexpixLayoutSettings settings)
         {
-            var close = text.IndexOf('>', i + 1);
-            if (close < 0 || close - i > MaxTagLength)
+            var closeRelative = text.Slice(i + 1).IndexOf('>');
+            if (closeRelative < 0 || closeRelative + 1 > MaxTagLength)
                 return false;
 
-            var tag = text.Substring(i + 1, close - i - 1);
+            var close = i + 1 + closeRelative;
+            var tag = text.Slice(i + 1, closeRelative);
 
             if (noparse)
             {
-                if (tag != "/noparse")
+                if (!tag.SequenceEqual("/noparse"))
                     return false;
                 noparse = false;
                 i = close;
                 return true;
             }
 
-            switch (tag)
+            if (tag.SequenceEqual("noparse"))
             {
-                case "noparse":
-                    noparse = true;
-                    i = close;
-                    return true;
-                case "br":
-                    SItems.Add(new Item { Codepoint = '\n', Newline = true });
-                    i = close;
-                    return true;
-                case "/color":
-                    if (SColorStack.Count > 0)
-                    {
-                        currentColor = SColorStack[^1];
-                        SColorStack.RemoveAt(SColorStack.Count - 1);
-                    }
+                noparse = true;
+                i = close;
+                return true;
+            }
 
-                    i = close;
-                    return true;
+            if (tag.SequenceEqual("br"))
+            {
+                SItems.Add(new Item { Codepoint = '\n', Newline = true });
+                i = close;
+                return true;
+            }
+
+            if (tag.SequenceEqual("/color"))
+            {
+                if (SColorStack.Count > 0)
+                {
+                    currentColor = SColorStack[^1];
+                    SColorStack.RemoveAt(SColorStack.Count - 1);
+                }
+
+                i = close;
+                return true;
             }
 
             if (tag.StartsWith("color=", StringComparison.Ordinal))
             {
-                var value = tag.Substring(6).Trim('"');
-                if (!ColorUtility.TryParseHtmlString(value, out var parsed))
+                var value = tag.Slice(6).Trim('"');
+                if (!TryParseColor(value, out var parsed))
                     return false;
                 SColorStack.Add(currentColor);
                 currentColor = parsed;
@@ -288,22 +314,23 @@ namespace Texpix
                 if (settings.SpriteAsset == null)
                     return false;
 
-                // Optional attribute: <sprite=name tint=1> tints with the current rich-text color.
-                var spec = tag;
+                var spec = tag.Slice(6);
+
+                // Optional trailing attribute: <sprite=name tint=1> tints with the
+                // current rich-text color.
                 var tint = false;
-                var tintAt = spec.IndexOf(" tint=1", StringComparison.Ordinal);
-                if (tintAt >= 0)
+                if (spec.EndsWith(" tint=1", StringComparison.Ordinal))
                 {
                     tint = true;
-                    spec = spec.Remove(tintAt, " tint=1".Length);
+                    spec = spec.Slice(0, spec.Length - " tint=1".Length);
                 }
 
                 TexpixSpriteAsset.Entry entry;
                 bool found;
-                if (spec.StartsWith("sprite=", StringComparison.Ordinal))
-                    found = settings.SpriteAsset.TryGetEntry(spec.Substring(7).Trim('"'), out entry);
-                else if (spec.StartsWith("sprite index=", StringComparison.Ordinal) &&
-                         int.TryParse(spec.Substring(13), out var index))
+                if (spec.Length > 0 && spec[0] == '=')
+                    found = settings.SpriteAsset.TryGetEntry(spec.Slice(1).Trim('"'), out entry);
+                else if (spec.StartsWith(" index=", StringComparison.Ordinal) &&
+                         int.TryParse(spec.Slice(7), out var index))
                     found = settings.SpriteAsset.TryGetEntry(index, out entry);
                 else
                     return false;
@@ -333,6 +360,126 @@ namespace Texpix
             }
 
             return false;
+        }
+
+        /// <summary>
+        ///     Span-based replacement for ColorUtility.TryParseHtmlString: hex forms
+        ///     (#RGB / #RGBA / #RRGGBB / #RRGGBBAA) and the HTML color names that
+        ///     ColorUtility supports, without allocating. Unknown names fall back to
+        ///     ColorUtility (allocates; rare).
+        /// </summary>
+        private static bool TryParseColor(ReadOnlySpan<char> value, out Color color)
+        {
+            if (value.Length > 0 && value[0] == '#')
+                return TryParseHexColor(value.Slice(1), out color);
+            return TryParseNamedColor(value, out color);
+        }
+
+        private static bool TryParseHexColor(ReadOnlySpan<char> hex, out Color color)
+        {
+            color = default;
+            int r, g, b;
+            var a = 0xFF;
+            switch (hex.Length)
+            {
+                case 3:
+                case 4:
+                    if (!TryParseNibble(hex[0], out r) || !TryParseNibble(hex[1], out g) ||
+                        !TryParseNibble(hex[2], out b))
+                        return false;
+                    r *= 17;
+                    g *= 17;
+                    b *= 17;
+                    if (hex.Length == 4)
+                    {
+                        if (!TryParseNibble(hex[3], out a))
+                            return false;
+                        a *= 17;
+                    }
+
+                    break;
+                case 6:
+                case 8:
+                    if (!TryParseHexByte(hex, 0, out r) || !TryParseHexByte(hex, 2, out g) ||
+                        !TryParseHexByte(hex, 4, out b))
+                        return false;
+                    if (hex.Length == 8 && !TryParseHexByte(hex, 6, out a))
+                        return false;
+                    break;
+                default:
+                    return false;
+            }
+
+            color = new Color32((byte)r, (byte)g, (byte)b, (byte)a);
+            return true;
+        }
+
+        private static bool TryParseNibble(char c, out int value)
+        {
+            switch (c)
+            {
+                case >= '0' and <= '9':
+                    value = c - '0';
+                    return true;
+                case >= 'a' and <= 'f':
+                    value = c - 'a' + 10;
+                    return true;
+                case >= 'A' and <= 'F':
+                    value = c - 'A' + 10;
+                    return true;
+                default:
+                    value = 0;
+                    return false;
+            }
+        }
+
+        private static bool TryParseHexByte(ReadOnlySpan<char> hex, int offset, out int value)
+        {
+            value = 0;
+            if (!TryParseNibble(hex[offset], out var high) || !TryParseNibble(hex[offset + 1], out var low))
+                return false;
+            value = (high << 4) | low;
+            return true;
+        }
+
+        private static bool TryParseNamedColor(ReadOnlySpan<char> value, out Color color)
+        {
+            // The HTML names ColorUtility.TryParseHtmlString documents, same values.
+            if (NameIs(value, "red")) return Rgb(0xFF0000, out color);
+            if (NameIs(value, "cyan") || NameIs(value, "aqua")) return Rgb(0x00FFFF, out color);
+            if (NameIs(value, "blue")) return Rgb(0x0000FF, out color);
+            if (NameIs(value, "darkblue")) return Rgb(0x0000A0, out color);
+            if (NameIs(value, "lightblue")) return Rgb(0xADD8E6, out color);
+            if (NameIs(value, "purple")) return Rgb(0x800080, out color);
+            if (NameIs(value, "yellow")) return Rgb(0xFFFF00, out color);
+            if (NameIs(value, "lime")) return Rgb(0x00FF00, out color);
+            if (NameIs(value, "fuchsia") || NameIs(value, "magenta")) return Rgb(0xFF00FF, out color);
+            if (NameIs(value, "white")) return Rgb(0xFFFFFF, out color);
+            if (NameIs(value, "silver")) return Rgb(0xC0C0C0, out color);
+            if (NameIs(value, "grey") || NameIs(value, "gray")) return Rgb(0x808080, out color);
+            if (NameIs(value, "black")) return Rgb(0x000000, out color);
+            if (NameIs(value, "orange")) return Rgb(0xFFA500, out color);
+            if (NameIs(value, "brown")) return Rgb(0xA52A2A, out color);
+            if (NameIs(value, "maroon")) return Rgb(0x800000, out color);
+            if (NameIs(value, "green")) return Rgb(0x008000, out color);
+            if (NameIs(value, "olive")) return Rgb(0x808000, out color);
+            if (NameIs(value, "navy")) return Rgb(0x000080, out color);
+            if (NameIs(value, "teal")) return Rgb(0x008080, out color);
+
+            // Unknown name: preserve full ColorUtility behavior at the cost of one
+            // string allocation. This path should be rare in practice.
+            return ColorUtility.TryParseHtmlString(value.ToString(), out color);
+        }
+
+        private static bool NameIs(ReadOnlySpan<char> value, string name)
+        {
+            return value.Equals(name.AsSpan(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool Rgb(int rgb, out Color color)
+        {
+            color = new Color32((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb, 255);
+            return true;
         }
 
         private static void BreakLines(ITexpixFontSource font, int maxWidth, bool wrap, int letterSpacing)

@@ -52,6 +52,24 @@ namespace Texpix
             return false;
         }
 
+        /// <summary>
+        ///     Allocation-free name lookup for the rich-text parser. Linear scan:
+        ///     a Dictionary cannot be queried by span on this runtime, and entry
+        ///     counts are small.
+        /// </summary>
+        public bool TryGetEntry(ReadOnlySpan<char> name, out Entry entry)
+        {
+            for (var i = 0; i < entries.Length; i++)
+                if (name.SequenceEqual(entries[i].name))
+                {
+                    entry = entries[i];
+                    return true;
+                }
+
+            entry = default;
+            return false;
+        }
+
         public bool TryGetEntry(int index, out Entry entry)
         {
             if (index >= 0 && index < entries.Length)

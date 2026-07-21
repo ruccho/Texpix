@@ -1,9 +1,12 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.TextCore;
 using UnityEngine.TextCore.LowLevel;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace Texpix
 {
@@ -330,44 +333,59 @@ namespace Texpix
                 return glyph;
             }
 
-            var binary = new byte[rect.width * rect.height];
-            for (var y = 0; y < rect.height; y++)
+            // Pooled scratch buffers: both are fully overwritten before being read
+            // (the binary copy below, Classify writing every output pixel), so the
+            // rented arrays need no clearing.
+            var pool = ArrayPool<byte>.Shared;
+            var binaryBuffer = pool.Rent(rect.width * rect.height);
+            var levelsBuffer = pool.Rent(paddedWidth * paddedHeight);
+            try
             {
-                var srcRow = (rect.y + y) * _scratchTexture.width + rect.x;
-                for (var x = 0; x < rect.width; x++)
-                    binary[y * rect.width + x] = scratchData[srcRow + x] > 127 ? (byte)1 : (byte)0;
-            }
-
-            var levels = new byte[paddedWidth * paddedHeight];
-            GlyphClassifier.Classify(binary, rect.width, rect.height, levels);
-
-            if (!_atlas.TryAllocateCell(out var cellIndex, out var origin))
-            {
-                // Atlas exhausted: reset it and let referencing texts re-add the glyphs
-                // they still need on the rebuild triggered by AtlasChanged. Thrashing
-                // here means the max atlas size is too small for the visible text.
-                Debug.LogWarning(
-                    $"TexpixFontAsset '{name}': atlas exhausted (max height {atlasMaxHeight}px); resetting. Increase Atlas Max Height if this repeats.");
-                _atlas.Clear();
-                _glyphs.Clear();
-                AtlasChanged?.Invoke();
-                if (!_atlas.TryAllocateCell(out cellIndex, out origin))
+                var binary = binaryBuffer.AsSpan(0, rect.width * rect.height);
+                for (var y = 0; y < rect.height; y++)
                 {
-                    Debug.LogError($"TexpixFontAsset '{name}': atlas cannot fit even a single glyph.");
-                    return glyph;
+                    var srcRow = (rect.y + y) * _scratchTexture.width + rect.x;
+                    for (var x = 0; x < rect.width; x++)
+                        binary[y * rect.width + x] = scratchData[srcRow + x] > 127 ? (byte)1 : (byte)0;
                 }
+
+                var levels = levelsBuffer.AsSpan(0, paddedWidth * paddedHeight);
+                GlyphClassifier.Classify(binary, rect.width, rect.height, levels);
+
+                if (!_atlas.TryAllocateCell(out var cellIndex, out var origin))
+                {
+                    // Atlas exhausted: reset it and let referencing texts re-add the glyphs
+                    // they still need on the rebuild triggered by AtlasChanged. Thrashing
+                    // here means the max atlas size is too small for the visible text.
+                    Debug.LogWarning(
+                        $"TexpixFontAsset '{name}': atlas exhausted (max height {atlasMaxHeight}px); resetting. Increase Atlas Max Height if this repeats.");
+                    _atlas.Clear();
+                    _glyphs.Clear();
+                    AtlasChanged?.Invoke();
+                    if (!_atlas.TryAllocateCell(out cellIndex, out origin))
+                    {
+                        Debug.LogError($"TexpixFontAsset '{name}': atlas cannot fit even a single glyph.");
+                        return glyph;
+                    }
+                }
+
+                _atlas.WriteGlyph(origin, levels, paddedWidth, paddedHeight);
+                _atlas.ApplyIfDirty();
+
+                glyph.AtlasX = origin.x;
+                glyph.AtlasY = origin.y;
+                glyph.CellIndex = cellIndex;
+            }
+            finally
+            {
+                pool.Return(binaryBuffer);
+                pool.Return(levelsBuffer);
             }
 
-            _atlas.WriteGlyph(origin, levels, paddedWidth, paddedHeight);
-            _atlas.ApplyIfDirty();
-
-            glyph.AtlasX = origin.x;
-            glyph.AtlasY = origin.y;
             glyph.Width = paddedWidth;
             glyph.Height = paddedHeight;
             glyph.BearingX = Mathf.RoundToInt(rendered.metrics.horizontalBearingX) - 1;
             glyph.BearingY = Mathf.RoundToInt(rendered.metrics.horizontalBearingY) + 1;
-            glyph.CellIndex = cellIndex;
             return glyph;
         }
 
