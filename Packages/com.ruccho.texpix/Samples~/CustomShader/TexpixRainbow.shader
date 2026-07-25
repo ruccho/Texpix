@@ -1,13 +1,11 @@
 // Sample: custom Texpix shader using the public Texpix.hlsl include.
-// The fill color cycles through hues along x and time; the outline uses the
-// regular outline properties. Drop this material into TexpixText.material.
+// The fill color cycles through hues along x and time; the outline color/mode come
+// from the vertex stream. Drop this material into TexpixText.material.
 Shader "Texpix/Samples/Rainbow"
 {
     Properties
     {
         [PerRendererData] _MainTex ("Texpix Atlas", 2D) = "black" {}
-        _OutlineColor ("Outline Color", Color) = (0, 0, 0, 1)
-        _OutlineMode ("Outline Mode (0/1/2)", Float) = 0
         _HueScale ("Hue Cycle per Font Pixel", Float) = 0.02
         _HueSpeed ("Hue Cycle per Second", Float) = 0.5
 
@@ -66,7 +64,8 @@ Shader "Texpix/Samples/Rainbow"
             {
                 float4 vertex : POSITION;
                 float4 color : COLOR;
-                float2 texcoord : TEXCOORD0;
+                // xy = atlas font-pixel coords, zw = packed outline color/mode.
+                float4 texcoord : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -74,18 +73,20 @@ Shader "Texpix/Samples/Rainbow"
             {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                float2 fontPx : TEXCOORD0;
+                // xy = atlas font-pixel coords, z = outline mode.
+                float3 fontPx : TEXCOORD0;
                 float4 worldPosition : TEXCOORD1;
+                fixed4 outlineColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
-            fixed4 _OutlineColor;
-            float _OutlineMode;
             float _HueScale;
             float _HueSpeed;
             float4 _ClipRect;
+            // Set globally by Unity; mirrors Canvas.vertexColorAlwaysGammaSpace.
+            float _UIVertexColorAlwaysGammaSpace;
 
             v2f vert(appdata_t v)
             {
@@ -94,8 +95,12 @@ Shader "Texpix/Samples/Rainbow"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.worldPosition = v.vertex;
                 o.vertex = UnityObjectToClipPos(o.worldPosition);
-                o.fontPx = v.texcoord;
-                o.color = v.color;
+                float4 outlineColor;
+                float outlineMode;
+                TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode);
+                o.fontPx = float3(v.texcoord.xy, outlineMode);
+                o.outlineColor = outlineColor;
+                o.color = TexpixUIVertexColor(v.color, _UIVertexColorAlwaysGammaSpace);
                 return o;
             }
 
@@ -109,11 +114,11 @@ Shader "Texpix/Samples/Rainbow"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx);
+                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx.xy);
 
                 float hue = frac(i.fontPx.x * _HueScale + _Time.y * _HueSpeed);
                 fixed4 fill = fixed4(HueToRgb(hue), 1.0) * i.color;
-                fixed4 color = TexpixShade(level, fill, _OutlineColor, _OutlineMode);
+                fixed4 color = TexpixShade(level, fill, i.outlineColor, i.fontPx.z);
 
                 #ifdef UNITY_UI_CLIP_RECT
                 color.a *= UnityGet2DClipping(i.worldPosition.xy, _ClipRect);

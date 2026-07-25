@@ -1,27 +1,24 @@
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace Texpix
 {
-    public enum TexpixOutlineMode
-    {
-        None = 0,
-        FourNeighbor = 1,
-        EightNeighbor = 2
-    }
-
     /// <summary>
     ///     uGUI text component rendering a Texpix pixel-font atlas. Vertices carry atlas
-    ///     font-pixel coordinates in uv0; the shader decodes the 2bpp atlas per pixel.
-    ///     Text is laid out on the baseline starting at the rect pivot (M2 scope).
+    ///     font-pixel coordinates and the packed outline color/mode in uv0 (see
+    ///     <see cref="TexpixVertexFormat" />); the shader decodes the 2bpp atlas per pixel.
+    ///     Because nothing per-component lives in material properties, every component
+    ///     shares one material and uGUI can batch them.
     /// </summary>
     // Note: since uGUI 2.0 (Unity 6), Graphic no longer requires CanvasRenderer
     // itself, so the component must declare it explicitly.
     [AddComponentMenu("UI/Texpix Text")]
     [RequireComponent(typeof(CanvasRenderer))]
-    public sealed class TexpixText : MaskableGraphic
+    public sealed class TexpixText : MaskableGraphic, ILayoutElement
     {
         private const string SpriteChildName = "Texpix Sprites";
         private const string FallbackChildPrefix = "Texpix Fallback ";
@@ -30,10 +27,16 @@ namespace Texpix
         private static readonly List<TexpixQuad> SSpriteQuads = new();
         private static readonly List<Vector3> SSpriteVerts = new();
         private static readonly List<Color32> SSpriteColors = new();
-        private static readonly List<Vector2> SSpriteUvs = new();
+        private static readonly List<Vector4> SSpriteUvs = new();
         private static readonly List<int> SSpriteIndices = new();
-        private static readonly int SOutlineColorId = Shader.PropertyToID("_OutlineColor");
-        private static readonly int SOutlineModeId = Shader.PropertyToID("_OutlineMode");
+
+        /// <summary>
+        ///     Shared by every component: the Texpix shader takes all per-text state from
+        ///     the vertex stream, so one instance is enough and uGUI batches across
+        ///     components that use the same atlas texture.
+        /// </summary>
+        private static Material s_SharedMaterial;
+
         [SerializeField] private TexpixFontAsset font;
         [SerializeField] [TextArea(3, 10)] private string text = "";
         [SerializeField] [Min(0.01f)] private float pixelScale = 1f;
@@ -42,18 +45,21 @@ namespace Texpix
         [SerializeField] private TexpixWrapMode wrapMode = TexpixWrapMode.Wrap;
         [SerializeField] private TexpixOverflowMode overflow = TexpixOverflowMode.Overflow;
         [SerializeField] private int letterSpacing;
+
         [SerializeField] private int lineSpacing;
-        [SerializeField] private bool snapToPixelGrid = true;
+
+        // [SerializeField] private bool snapToPixelGrid = true;
         [SerializeField] private bool richText = true;
         [SerializeField] private TexpixSpriteAsset spriteAsset;
         [SerializeField] private TexpixOutlineMode outlineMode = TexpixOutlineMode.None;
         [SerializeField] private Color outlineColor = Color.black;
         private readonly List<TexpixSubGraphic> _fallbackSubs = new();
         private readonly List<TexpixFontAsset> _subscribedFonts = new();
-        private bool _pendingAtlasDirty;
-        private bool _populating;
 
-        private Material _runtimeMaterial;
+        /// <summary>Set while layout runs (measuring or populating), where dirtying is not allowed.</summary>
+        private bool _generating;
+
+        private bool _pendingAtlasDirty;
         private TexpixSubGraphic _spriteSubGraphic;
 
         public TexpixFontAsset Font
@@ -80,7 +86,7 @@ namespace Texpix
                 if (text == value)
                     return;
                 text = value;
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -91,7 +97,7 @@ namespace Texpix
             set
             {
                 pixelScale = Mathf.Max(0.01f, value);
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -127,7 +133,7 @@ namespace Texpix
                 if (wrapMode == value)
                     return;
                 wrapMode = value;
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -152,7 +158,7 @@ namespace Texpix
                 if (letterSpacing == value)
                     return;
                 letterSpacing = value;
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -165,10 +171,11 @@ namespace Texpix
                 if (lineSpacing == value)
                     return;
                 lineSpacing = value;
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
+        /*
         public bool SnapToPixelGrid
         {
             get => snapToPixelGrid;
@@ -180,6 +187,7 @@ namespace Texpix
                 SetVerticesDirty();
             }
         }
+        */
 
         public bool RichText
         {
@@ -189,7 +197,7 @@ namespace Texpix
                 if (richText == value)
                     return;
                 richText = value;
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -202,7 +210,7 @@ namespace Texpix
                     return;
                 spriteAsset = value;
                 EnsureSpriteSubGraphic();
-                SetVerticesDirty();
+                SetTextDirty();
             }
         }
 
@@ -214,7 +222,8 @@ namespace Texpix
                 if (outlineMode == value)
                     return;
                 outlineMode = value;
-                ApplyMaterialProperties();
+                // Outline state lives in the vertex stream, so it is a mesh change.
+                SetVerticesDirty();
             }
         }
 
@@ -226,7 +235,7 @@ namespace Texpix
                 if (outlineColor == value)
                     return;
                 outlineColor = value;
-                ApplyMaterialProperties();
+                SetVerticesDirty();
             }
         }
 
@@ -237,7 +246,7 @@ namespace Texpix
         {
             get
             {
-                if (_runtimeMaterial == null)
+                if (s_SharedMaterial == null)
                 {
                     var shader = Shader.Find("Texpix/UI Default");
                     if (shader == null)
@@ -246,13 +255,10 @@ namespace Texpix
                         return base.defaultMaterial;
                     }
 
-                    _runtimeMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                    // No SetMaterialDirty here: this getter is typically first hit
-                    // inside a canvas rebuild, where dirtying is not allowed.
-                    WriteMaterialProperties();
+                    s_SharedMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
                 }
 
-                return _runtimeMaterial;
+                return s_SharedMaterial;
             }
         }
 
@@ -286,15 +292,7 @@ namespace Texpix
             }
 
             _fallbackSubs.Clear();
-            if (_runtimeMaterial != null)
-            {
-                if (Application.isPlaying)
-                    Destroy(_runtimeMaterial);
-                else
-                    DestroyImmediate(_runtimeMaterial);
-                _runtimeMaterial = null;
-            }
-
+            // s_SharedMaterial outlives every component and is not destroyed here.
             base.OnDestroy();
         }
 
@@ -304,7 +302,6 @@ namespace Texpix
             base.OnValidate();
             pixelScale = Mathf.Max(0.01f, pixelScale);
             SubscribeFont(); // re-resolves the fallback chain
-            ApplyMaterialProperties();
             // Object creation is not allowed inside OnValidate; defer sub-graphic setup.
             EditorApplication.delayCall += () =>
             {
@@ -318,18 +315,35 @@ namespace Texpix
         }
 #endif
 
-        private void WriteMaterialProperties()
+        /// <summary>
+        ///     Widest line when nothing constrains the text, in canvas units. Read by
+        ///     ContentSizeFitter and the layout groups after
+        ///     <see cref="CalculateLayoutInputHorizontal" />.
+        /// </summary>
+        public float preferredWidth { get; private set; }
+
+        /// <summary>
+        ///     Height the text needs at the width the layout system has already resolved,
+        ///     in canvas units.
+        /// </summary>
+        public float preferredHeight { get; private set; }
+
+        public float minWidth => 0f;
+        public float flexibleWidth => -1f;
+        public float minHeight => 0f;
+        public float flexibleHeight => -1f;
+        public int layoutPriority => 0;
+
+        public void CalculateLayoutInputHorizontal()
         {
-            _runtimeMaterial.SetColor(SOutlineColorId, outlineColor);
-            _runtimeMaterial.SetFloat(SOutlineModeId, (float)outlineMode);
+            preferredWidth = Measure(0).WidthPx * pixelScale;
         }
 
-        private void ApplyMaterialProperties()
+        public void CalculateLayoutInputVertical()
         {
-            if (_runtimeMaterial == null)
-                return;
-            WriteMaterialProperties();
-            SetMaterialDirty();
+            // Runs after SetLayoutHorizontal, so the rect already has its final width
+            // and wrapping resolves against the same budget the mesh will use.
+            preferredHeight = Measure(Mathf.FloorToInt(rectTransform.rect.width / pixelScale)).HeightPx * pixelScale;
         }
 
         /// <summary>
@@ -427,13 +441,61 @@ namespace Texpix
             sub = null;
         }
 
+        /// <summary>
+        ///     Text content or a setting that affects the text's size changed: both the
+        ///     mesh and any layout driven by <see cref="ILayoutElement" /> are now stale.
+        /// </summary>
+        private void SetTextDirty()
+        {
+            SetVerticesDirty();
+            SetLayoutDirty();
+        }
+
+        /// <summary>
+        ///     Lays the text out at the given width budget (0 = unconstrained) and returns
+        ///     its size in font pixels, without producing geometry. Height and overflow are
+        ///     deliberately unconstrained: the layout system asks for the text's natural
+        ///     size, and trimming it here would let a fitter shrink-wrap its own truncation.
+        /// </summary>
+        private TexpixTextMetrics Measure(int maxWidthPx)
+        {
+            if (font == null || !font.IsReady || string.IsNullOrEmpty(text))
+                return default;
+
+            var settings = new TexpixLayoutSettings
+            {
+                MaxWidthPx = maxWidthPx,
+                MaxHeightPx = 0,
+                HorizontalAlignment = horizontalAlignment,
+                VerticalAlignment = verticalAlignment,
+                WrapMode = wrapMode,
+                Overflow = TexpixOverflowMode.Overflow,
+                LetterSpacingPx = letterSpacing,
+                LineSpacingPx = lineSpacing,
+                RichText = richText,
+                SpriteAsset = spriteAsset
+            };
+
+            // Measuring rasterizes glyphs, which can grow the atlas; the guard routes the
+            // resulting AtlasChanged through the deferred path instead of dirtying mid-layout.
+            _generating = true;
+            try
+            {
+                return TexpixTextGenerator.Measure(font, text, in settings);
+            }
+            finally
+            {
+                _generating = false;
+            }
+        }
+
         private void OnAtlasChanged()
         {
             // Fired on atlas texture recreation (growth) and atlas resets — both
             // require a repaint, including our own (a reset invalidates quads already
             // emitted during the current populate). Dirtying inside the canvas
             // rebuild loop is unsupported, so defer to the next canvas update.
-            if (_populating || CanvasUpdateRegistry.IsRebuildingGraphics() || CanvasUpdateRegistry.IsRebuildingLayout())
+            if (_generating || CanvasUpdateRegistry.IsRebuildingGraphics() || CanvasUpdateRegistry.IsRebuildingLayout())
             {
                 if (!_pendingAtlasDirty)
                 {
@@ -479,7 +541,7 @@ namespace Texpix
                 SpriteAsset = spriteAsset
             };
 
-            _populating = true;
+            _generating = true;
             try
             {
                 TexpixTextGenerator.Generate(font, text, in settings, SQuads,
@@ -487,19 +549,22 @@ namespace Texpix
             }
             finally
             {
-                _populating = false;
+                _generating = false;
             }
 
             // Layout origin is the rect's top-left corner; content extends toward -y.
             // Snapping keeps glyph corners on multiples of pixelScale in local space so
             // a pixel-perfect canvas samples texels 1:1.
             Vector2 origin = new(rect.xMin, rect.yMax);
+            /*
             if (snapToPixelGrid)
                 origin = new Vector2(
                     Mathf.Round(origin.x / pixelScale) * pixelScale,
                     Mathf.Round(origin.y / pixelScale) * pixelScale);
+                    */
 
             var componentColor = color;
+            var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode);
             foreach (var quad in SQuads)
             {
                 if (quad.FontIndex != 0)
@@ -512,20 +577,24 @@ namespace Texpix
                 Color32 vertexColor = componentColor * quad.Color;
 
                 var vertexIndex = vh.currentVertCount;
-                vh.AddVert(new Vector3(x0, y0), vertexColor, new Vector4(quad.AtlasX, quad.AtlasY));
-                vh.AddVert(new Vector3(x0, y1), vertexColor, new Vector4(quad.AtlasX, quad.AtlasY + quad.Height));
+                vh.AddVert(new Vector3(x0, y0), vertexColor,
+                    new Vector4(quad.AtlasX, quad.AtlasY, packedOutline.x, packedOutline.y));
+                vh.AddVert(new Vector3(x0, y1), vertexColor,
+                    new Vector4(quad.AtlasX, quad.AtlasY + quad.Height, packedOutline.x, packedOutline.y));
                 vh.AddVert(new Vector3(x1, y1), vertexColor,
-                    new Vector4(quad.AtlasX + quad.Width, quad.AtlasY + quad.Height));
-                vh.AddVert(new Vector3(x1, y0), vertexColor, new Vector4(quad.AtlasX + quad.Width, quad.AtlasY));
+                    new Vector4(quad.AtlasX + quad.Width, quad.AtlasY + quad.Height, packedOutline.x,
+                        packedOutline.y));
+                vh.AddVert(new Vector3(x1, y0), vertexColor,
+                    new Vector4(quad.AtlasX + quad.Width, quad.AtlasY, packedOutline.x, packedOutline.y));
                 vh.AddTriangle(vertexIndex, vertexIndex + 1, vertexIndex + 2);
                 vh.AddTriangle(vertexIndex + 2, vertexIndex + 3, vertexIndex);
             }
 
-            UploadFallbackQuads(origin);
+            UploadFallbackQuads(origin, packedOutline);
             UploadSpriteQuads(origin);
         }
 
-        private void UploadFallbackQuads(Vector2 origin)
+        private void UploadFallbackQuads(Vector2 origin, Vector2 packedOutline)
         {
             var componentColor = color;
             for (var fi = 0; fi < _fallbackSubs.Count; fi++)
@@ -558,11 +627,15 @@ namespace Texpix
                     SSpriteColors.Add(vertexColor);
                     SSpriteColors.Add(vertexColor);
                     SSpriteColors.Add(vertexColor);
-                    // The Texpix shader expects atlas font-pixel coordinates in uv0.
-                    SSpriteUvs.Add(new Vector2(quad.AtlasX, quad.AtlasY));
-                    SSpriteUvs.Add(new Vector2(quad.AtlasX, quad.AtlasY + quad.Height));
-                    SSpriteUvs.Add(new Vector2(quad.AtlasX + quad.Width, quad.AtlasY + quad.Height));
-                    SSpriteUvs.Add(new Vector2(quad.AtlasX + quad.Width, quad.AtlasY));
+                    // The Texpix shader expects atlas font-pixel coordinates in uv0.xy
+                    // and the packed outline in uv0.zw.
+                    SSpriteUvs.Add(new Vector4(quad.AtlasX, quad.AtlasY, packedOutline.x, packedOutline.y));
+                    SSpriteUvs.Add(new Vector4(quad.AtlasX, quad.AtlasY + quad.Height, packedOutline.x,
+                        packedOutline.y));
+                    SSpriteUvs.Add(new Vector4(quad.AtlasX + quad.Width, quad.AtlasY + quad.Height, packedOutline.x,
+                        packedOutline.y));
+                    SSpriteUvs.Add(new Vector4(quad.AtlasX + quad.Width, quad.AtlasY, packedOutline.x,
+                        packedOutline.y));
                     SSpriteIndices.Add(vertexIndex);
                     SSpriteIndices.Add(vertexIndex + 1);
                     SSpriteIndices.Add(vertexIndex + 2);
@@ -619,10 +692,11 @@ namespace Texpix
                 SSpriteColors.Add(spriteColor);
                 SSpriteColors.Add(spriteColor);
                 SSpriteColors.Add(spriteColor);
-                SSpriteUvs.Add(new Vector2(u0, v0));
-                SSpriteUvs.Add(new Vector2(u0, v1));
-                SSpriteUvs.Add(new Vector2(u1, v1));
-                SSpriteUvs.Add(new Vector2(u1, v0));
+                // Sprites render with the standard UI shader: normalized UVs, no outline.
+                SSpriteUvs.Add(new Vector4(u0, v0));
+                SSpriteUvs.Add(new Vector4(u0, v1));
+                SSpriteUvs.Add(new Vector4(u1, v1));
+                SSpriteUvs.Add(new Vector4(u1, v0));
                 SSpriteIndices.Add(vertexIndex);
                 SSpriteIndices.Add(vertexIndex + 1);
                 SSpriteIndices.Add(vertexIndex + 2);

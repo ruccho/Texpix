@@ -131,16 +131,34 @@ namespace Texpix
         }
 
         /// <summary>
+        ///     Lays the text out and reports its size without emitting geometry. This is
+        ///     what the uGUI layout system asks for before a mesh exists.
+        /// </summary>
+        public static TexpixTextMetrics Measure(ITexpixFontSource font, string text,
+            in TexpixLayoutSettings settings)
+        {
+            return Generate(font, (text ?? "").AsSpan(), in settings, null, null);
+        }
+
+        /// <inheritdoc cref="Measure(ITexpixFontSource,string,in TexpixLayoutSettings)" />
+        public static TexpixTextMetrics Measure(ITexpixFontSource font, ReadOnlySpan<char> text,
+            in TexpixLayoutSettings settings)
+        {
+            return Generate(font, text, in settings, null, null);
+        }
+
+        /// <summary>
         ///     Span-based entry point: lets callers feed text from reusable char buffers
         ///     (counters, timers, ...) without building strings. The text is fully
         ///     consumed during the call; nothing references it afterwards. Layout and
         ///     rich-text parsing are allocation-free after warm-up (the only exception
         ///     is a &lt;color&gt; name outside the built-in HTML set).
+        ///     A null <paramref name="quads" /> measures without emitting anything.
         /// </summary>
         public static TexpixTextMetrics Generate(ITexpixFontSource font, ReadOnlySpan<char> text,
             in TexpixLayoutSettings settings, List<TexpixQuad> quads, List<TexpixQuad> spriteQuads)
         {
-            quads.Clear();
+            quads?.Clear();
             spriteQuads?.Clear();
             Shape(font, text, in settings);
             BreakLines(font, settings.MaxWidthPx, settings.WrapMode == TexpixWrapMode.Wrap, settings.LetterSpacingPx);
@@ -182,6 +200,9 @@ namespace Texpix
             {
                 var line = SLines[k];
                 maxLineWidth = Mathf.Max(maxLineWidth, line.Width);
+
+                if (quads == null)
+                    continue;
 
                 var xOffset = 0;
                 if (settings.MaxWidthPx > 0)

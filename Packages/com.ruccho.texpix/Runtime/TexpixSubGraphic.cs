@@ -52,7 +52,7 @@ namespace Texpix
             vh.Clear();
         }
 
-        public void UploadMesh(List<Vector3> vertices, List<Color32> colors, List<Vector2> uvs, List<int> indices)
+        public void UploadMesh(List<Vector3> vertices, List<Color32> colors, List<Vector4> uvs, List<int> indices)
         {
             if (_mesh == null)
                 _mesh = new Mesh { name = "Texpix Sprites", hideFlags = HideFlags.HideAndDontSave };

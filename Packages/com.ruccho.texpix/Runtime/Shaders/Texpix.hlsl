@@ -8,8 +8,9 @@
 //   1 = outline pixel only diagonally adjacent to the fill (8-neighborhood extra)
 //   0 = outside
 //
-// Vertices are expected to carry *font pixel* coordinates of the atlas in uv0
-// (integers at quad corners). All functions use float arithmetic only, so they work
+// Vertices are expected to carry *font pixel* coordinates of the atlas in uv0.xy
+// (integers at quad corners) and the packed outline color/mode in uv0.zw (see
+// TexpixUnpackOutline). All functions use float arithmetic only, so they work
 // on shader model 2.x targets.
 
 #ifndef TEXPIX_INCLUDED
@@ -50,6 +51,56 @@ float TexpixExtractLevel(float atlasR, float subPixel)
 // Usage (built-in pipeline): TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx)
 #define TexpixSampleLevel_Tex2D(tex, texelSize, fontPx) \
     TexpixExtractLevel(tex2D((tex), TexpixAtlasUV((fontPx), (texelSize))).r, TexpixSubPixel(fontPx))
+
+// Converts an 8-bit gamma-space UI color to the shader's working color space.
+// In linear projects this matches Unity's UIGammaToLinear (UnityUI.cginc): a piecewise
+// approximation whose error stays below 0.5/255 in gamma space, so 8-bit values survive
+// the round trip. Reimplemented here to keep this include free of UI-specific headers.
+float3 TexpixUIGammaToWorkingSpace(float3 value)
+{
+    #ifdef UNITY_COLORSPACE_GAMMA
+    return value;
+    #else
+    float3 low = 0.0849710 * value - 0.000163029;
+    float3 high = value * (value * (value * 0.265885 + 0.736584) - 0.00980184) + 0.00319697;
+    const float3 split = 0.0725490; // 18.5 / 255
+    return (value < split) ? low : high;
+    #endif
+}
+
+// Vertex colors reach the shader in gamma space when the canvas has
+// "Vertex Color Always In Gamma Color Space" enabled (Unity recommends it in linear
+// projects); otherwise uGUI has already converted them. Pass Unity's global
+// _UIVertexColorAlwaysGammaSpace as the second argument. Alpha is never converted.
+float4 TexpixUIVertexColor(float4 vertexColor, float alwaysGammaSpace)
+{
+    if (alwaysGammaSpace > 0.5)
+        vertexColor.rgb = TexpixUIGammaToWorkingSpace(vertexColor.rgb);
+    return vertexColor;
+}
+
+// Decodes the outline color and mode packed into uv0.zw by TexpixVertexFormat:
+//   z = R * 256 + G
+//   w = B * 1024 + A * 4 + mode
+// Both are exact integers in float32, so interpolating them across a quad (whose
+// corners all carry the same value) is lossless. Call this in the vertex shader and
+// interpolate the results, not the packed values.
+// The channels are 8-bit gamma-space values (like uGUI vertex colors), so the decoded
+// color is converted to the working color space here.
+void TexpixUnpackOutline(float2 packed, out float4 outlineColor, out float outlineMode)
+{
+    float rg = floor(packed.x + 0.5);
+    float r = floor(rg / 256.0);
+    float g = rg - r * 256.0;
+
+    float rest = floor(packed.y + 0.5);
+    float b = floor(rest / 1024.0);
+    rest -= b * 1024.0;
+    float a = floor(rest / 4.0);
+
+    outlineMode = rest - a * 4.0;
+    outlineColor = float4(TexpixUIGammaToWorkingSpace(float3(r, g, b) / 255.0), a / 255.0);
+}
 
 // Resolves a level into fill / outline / transparent using an outline mode
 // (TEXPIX_OUTLINE_*). Returns straight-alpha color.

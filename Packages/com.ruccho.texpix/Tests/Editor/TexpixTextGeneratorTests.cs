@@ -261,5 +261,37 @@ namespace Texpix.Tests
             Assert.That(Quads.Count, Is.EqualTo(0));
             Assert.That(m.WidthPx, Is.EqualTo(0));
         }
+
+        [Test]
+        public void Measure_MatchesGenerate_WithoutEmitting()
+        {
+            var font = new FakeFontSource();
+            var settings = Box(14, 100);
+
+            var generated = Run(font, "aaa bbb", settings);
+            var emitted = Quads.Count;
+            Quads.Clear();
+
+            var measured = TexpixTextGenerator.Measure(font, "aaa bbb", in settings);
+
+            Assert.That(emitted, Is.GreaterThan(0));
+            Assert.That(Quads.Count, Is.EqualTo(0)); // measuring touches no quad list
+            Assert.That(measured.WidthPx, Is.EqualTo(generated.WidthPx));
+            Assert.That(measured.HeightPx, Is.EqualTo(generated.HeightPx));
+            Assert.That(measured.LineCount, Is.EqualTo(generated.LineCount));
+        }
+
+        [Test]
+        public void Measure_Unconstrained_ReportsWidestLine()
+        {
+            var font = new FakeFontSource();
+            // "aaa\nbbbbb": 3*4 = 12 and 5*4 = 20 wide; two lines is one line height (11)
+            // plus one ascent-to-descent span (8 - -2 = 10).
+            var m = TexpixTextGenerator.Measure(font, "aaa\nbbbbb", Box(0, 0));
+
+            Assert.That(m.LineCount, Is.EqualTo(2));
+            Assert.That(m.WidthPx, Is.EqualTo(20));
+            Assert.That(m.HeightPx, Is.EqualTo(21));
+        }
     }
 }

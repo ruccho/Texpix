@@ -14,11 +14,21 @@ The include provides:
   (levels: 3 = fill, 2 = 4-neighbor outline, 1 = diagonal-only outline, 0 = outside)
 - `TexpixSampleLevel_Tex2D(tex, texelSize, fontPx)` — one-call decode for
   built-in-pipeline `sampler2D`
+- `TexpixUnpackOutline(packed, outlineColor, outlineMode)` — decode the outline
+  color/mode carried in `uv0.zw`
 - `TexpixShade(level, fillColor, outlineColor, outlineMode)` — standard
   fill/outline resolve
 
-Vertices carry **atlas font-pixel coordinates** in `uv0` (not normalized UVs) and
-the vertex color is the text color (component color × rich-text color).
+Vertex stream:
+
+- `uv0.xy` — **atlas font-pixel coordinates** (not normalized UVs)
+- `uv0.zw` — outline color and mode, packed as integers (`TexpixVertexFormat`
+  on the C# side). Unpack in the vertex shader and interpolate the results.
+- vertex color — the text color (component color × rich-text color)
+
+Nothing is per-component in material properties, so one material instance serves
+every `TexpixText` and uGUI can batch them; a custom shader should keep that
+property by reading the outline from the vertex stream rather than from uniforms.
 
 Usage: create a material from `Texpix/Samples/Rainbow` and assign it to
 `TexpixText.material`. Keep the UI stencil/clip properties and pragmas if you copy

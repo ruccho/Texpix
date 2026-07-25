@@ -5,8 +5,6 @@ Shader "Texpix/UI Default"
     Properties
     {
         [PerRendererData] _MainTex ("Texpix Atlas", 2D) = "black" {}
-        _OutlineColor ("Outline Color", Color) = (0, 0, 0, 1)
-        _OutlineMode ("Outline Mode (0/1/2)", Float) = 0
 
         _StencilComp ("Stencil Comparison", Float) = 8
         _Stencil ("Stencil ID", Float) = 0
@@ -63,7 +61,8 @@ Shader "Texpix/UI Default"
             {
                 float4 vertex : POSITION;
                 float4 color : COLOR;
-                float2 texcoord : TEXCOORD0;
+                // xy = atlas font-pixel coords, zw = packed outline color/mode.
+                float4 texcoord : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -71,16 +70,18 @@ Shader "Texpix/UI Default"
             {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                float2 fontPx : TEXCOORD0;
+                // xy = atlas font-pixel coords, z = outline mode.
+                float3 fontPx : TEXCOORD0;
                 float4 worldPosition : TEXCOORD1;
+                fixed4 outlineColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
-            fixed4 _OutlineColor;
-            float _OutlineMode;
             float4 _ClipRect;
+            // Set globally by Unity; mirrors Canvas.vertexColorAlwaysGammaSpace.
+            float _UIVertexColorAlwaysGammaSpace;
 
             v2f vert(appdata_t v)
             {
@@ -89,15 +90,20 @@ Shader "Texpix/UI Default"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
                 o.worldPosition = v.vertex;
                 o.vertex = UnityObjectToClipPos(o.worldPosition);
-                o.fontPx = v.texcoord;
-                o.color = v.color;
+
+                float4 outlineColor;
+                float outlineMode;
+                TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode);
+                o.fontPx = float3(v.texcoord.xy, outlineMode);
+                o.outlineColor = outlineColor;
+                o.color = TexpixUIVertexColor(v.color, _UIVertexColorAlwaysGammaSpace);
                 return o;
             }
 
             fixed4 frag(v2f i) : SV_Target
             {
-                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx);
-                fixed4 color = TexpixShade(level, i.color, _OutlineColor, _OutlineMode);
+                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx.xy);
+                fixed4 color = TexpixShade(level, i.color, i.outlineColor, i.fontPx.z);
 
                 #ifdef UNITY_UI_CLIP_RECT
                 color.a *= UnityGet2DClipping(i.worldPosition.xy, _ClipRect);
