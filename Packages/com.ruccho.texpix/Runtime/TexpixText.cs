@@ -48,7 +48,7 @@ namespace Texpix
 
         [SerializeField] private int lineSpacing;
 
-        // [SerializeField] private bool snapToPixelGrid = true;
+        [SerializeField] private bool snapToPixelGrid = true;
         [SerializeField] private bool richText = true;
         [SerializeField] private TexpixSpriteAsset spriteAsset;
         [SerializeField] private TexpixOutlineMode outlineMode = TexpixOutlineMode.None;
@@ -175,7 +175,6 @@ namespace Texpix
             }
         }
 
-        /*
         public bool SnapToPixelGrid
         {
             get => snapToPixelGrid;
@@ -187,7 +186,6 @@ namespace Texpix
                 SetVerticesDirty();
             }
         }
-        */
 
         public bool RichText
         {
@@ -556,12 +554,10 @@ namespace Texpix
             // Snapping keeps glyph corners on multiples of pixelScale in local space so
             // a pixel-perfect canvas samples texels 1:1.
             Vector2 origin = new(rect.xMin, rect.yMax);
-            /*
             if (snapToPixelGrid)
                 origin = new Vector2(
                     Mathf.Round(origin.x / pixelScale) * pixelScale,
                     Mathf.Round(origin.y / pixelScale) * pixelScale);
-                    */
 
             var componentColor = color;
             var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode);
