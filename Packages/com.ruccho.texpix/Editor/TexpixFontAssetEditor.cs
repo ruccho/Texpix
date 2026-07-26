@@ -35,6 +35,11 @@ namespace Texpix.Editor
 
             var asset = (TexpixFontAsset)target;
 
+            if (asset.ConfiguredAtlasFormatForInspector == TexpixAtlasFormat.FillOnly)
+                EditorGUILayout.HelpBox(
+                    "Fill Only stores 1 bit per font pixel — roughly half the atlas memory of Outline, and glyph cells lose their padding ring. Outline Mode on text using this font has no effect.",
+                    MessageType.Info);
+
             if (asset.AtlasMode == TexpixAtlasMode.Dynamic)
             {
                 EditorGUILayout.Space();
@@ -84,9 +89,9 @@ namespace Texpix.Editor
             }
 
             EditorGUILayout.LabelField(
-                $"{asset.DynamicGlyphCountForInspector} glyphs, {atlas.UsedCellCount}/{atlas.Capacity} cells of {atlas.CellWidthPx}x{atlas.CellHeightPx}px, atlas {atlas.WidthPx}x{atlas.HeightPx}px (R8 {atlas.Texture.width}x{atlas.Texture.height})",
+                $"{asset.DynamicGlyphCountForInspector} glyphs, {atlas.UsedCellCount}/{atlas.Capacity} cells of {atlas.CellWidthPx}x{atlas.CellHeightPx}px, atlas {atlas.WidthPx}x{atlas.HeightPx}px at {atlas.BitsPerPixel}bpp (R8 {atlas.Texture.width}x{atlas.Texture.height})",
                 EditorStyles.wordWrappedMiniLabel);
-            _preview.Draw(atlas.Texture);
+            _preview.Draw(atlas.Texture, atlas.Format);
         }
 
         private void DrawStaticBaking(TexpixFontAsset asset)
@@ -109,13 +114,23 @@ namespace Texpix.Editor
             var baked = asset.BakedAtlasTextureForInspector;
             if (baked != null)
             {
+                var bakedFormat = asset.BakedAtlasFormatForInspector;
+                var bakedBpp = TexpixAtlas.BitsPerPixelOf(bakedFormat);
                 EditorGUILayout.LabelField(
-                    $"Baked: {asset.BakedGlyphCount} glyphs, {asset.BakedKerningCount} kerning pairs, atlas {baked.width * 4}x{baked.height}px (R8 {baked.width}x{baked.height})",
+                    $"Baked: {asset.BakedGlyphCount} glyphs, {asset.BakedKerningCount} kerning pairs, atlas {baked.width * TexpixAtlas.PixelsPerTexelOf(bakedFormat)}x{baked.height}px at {bakedBpp}bpp (R8 {baked.width}x{baked.height})",
                     EditorStyles.wordWrappedMiniLabel);
+
+                // The baked glyph metrics depend on the format's padding ring, so the baked
+                // atlas keeps rendering in its own format until the asset is baked again.
+                if (bakedFormat != asset.ConfiguredAtlasFormatForInspector)
+                    EditorGUILayout.HelpBox(
+                        $"The baked atlas is {bakedFormat}, but Atlas Format is set to {asset.ConfiguredAtlasFormatForInspector}. Bake again to apply the change.",
+                        MessageType.Warning);
+
                 if (GUILayout.Button("Clear Baked Data"))
                     asset.ClearBaked();
 
-                _preview.Draw(baked);
+                _preview.Draw(baked, bakedFormat);
             }
             else if (asset.AtlasMode == TexpixAtlasMode.Static)
             {

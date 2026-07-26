@@ -1,17 +1,22 @@
 // Texpix atlas sampling helpers.
 //
-// A Texpix atlas is a single-channel (R8) texture where each texel packs
-// 4 horizontal font pixels at 2 bits each (LSB first). Every font pixel stores a
-// level:
-//   3 = glyph fill
-//   2 = outline pixel orthogonally adjacent to the fill (4-neighborhood)
-//   1 = outline pixel only diagonally adjacent to the fill (8-neighborhood extra)
-//   0 = outside
+// A Texpix atlas is a single-channel (R8) texture where each texel packs a run of
+// horizontal font pixels (LSB first). How many, and what a pixel can hold, depends on
+// the atlas format (TEXPIX_FORMAT_*):
+//
+//   Outline (2bpp, 4 pixels per texel) — every font pixel stores a level:
+//     3 = glyph fill
+//     2 = outline pixel orthogonally adjacent to the fill (4-neighborhood)
+//     1 = outline pixel only diagonally adjacent to the fill (8-neighborhood extra)
+//     0 = outside
+//   Fill only (1bpp, 8 pixels per texel) — one bit per font pixel, set = fill.
+//     The decode expands it to the fill level, so shading is format-agnostic and
+//     outline modes simply have nothing to draw.
 //
 // Vertices are expected to carry *font pixel* coordinates of the atlas in uv0.xy
-// (integers at quad corners) and the packed outline color/mode in uv0.zw (see
-// TexpixUnpackOutline). All functions use float arithmetic only, so they work
-// on shader model 2.x targets.
+// (integers at quad corners) and the packed outline color/mode plus the atlas format
+// in uv0.zw (see TexpixUnpackOutline). All functions use float arithmetic only, so
+// they work on shader model 2.x targets.
 
 #ifndef TEXPIX_INCLUDED
 #define TEXPIX_INCLUDED
@@ -25,32 +30,47 @@
 #define TEXPIX_OUTLINE_FOUR_NEIGHBOR 1.0
 #define TEXPIX_OUTLINE_EIGHT_NEIGHBOR 2.0
 
+#define TEXPIX_FORMAT_OUTLINE 0.0
+#define TEXPIX_FORMAT_FILL_ONLY 1.0
+
+// Font pixels packed into one texel: 4 at 2bpp, 8 at 1bpp.
+float TexpixPixelsPerTexel(float atlasFormat)
+{
+    return atlasFormat >= 0.5 ? 8.0 : 4.0;
+}
+
 // Converts a font-pixel coordinate to the UV of the texel containing it.
 // atlasTexelSize is the standard Unity _TexelSize vector of the atlas (1/w, 1/h, w, h).
-float2 TexpixAtlasUV(float2 fontPx, float4 atlasTexelSize)
+float2 TexpixAtlasUV(float2 fontPx, float4 atlasTexelSize, float atlasFormat)
 {
-    float texelX = floor(floor(fontPx.x) / 4.0) + 0.5;
+    float texelX = floor(floor(fontPx.x) / TexpixPixelsPerTexel(atlasFormat)) + 0.5;
     float texelY = floor(fontPx.y) + 0.5;
     return float2(texelX * atlasTexelSize.x, texelY * atlasTexelSize.y);
 }
 
-// Sub-pixel index (0..3) of a font-pixel coordinate within its texel.
-float TexpixSubPixel(float2 fontPx)
+// Sub-pixel index of a font-pixel coordinate within its texel (0..3 or 0..7).
+float TexpixSubPixel(float2 fontPx, float atlasFormat)
 {
-    return fmod(floor(fontPx.x), 4.0);
+    return fmod(floor(fontPx.x), TexpixPixelsPerTexel(atlasFormat));
 }
 
-// Extracts the 2-bit level of one font pixel from a sampled atlas value (R channel, 0..1).
-float TexpixExtractLevel(float atlasR, float subPixel)
+// Extracts the level of one font pixel from a sampled atlas value (R channel, 0..1).
+// A fill-only atlas stores a single bit, expanded here to TEXPIX_LEVEL_FILL so that
+// downstream shading does not need to know the format.
+float TexpixExtractLevel(float atlasR, float subPixel, float atlasFormat)
 {
     float packedByte = floor(atlasR * 255.0 + 0.5);
-    return fmod(floor(packedByte / exp2(subPixel * 2.0)), 4.0);
+    float bits = atlasFormat >= 0.5 ? 1.0 : 2.0;
+    float raw = fmod(floor(packedByte / exp2(subPixel * bits)), exp2(bits));
+    return atlasFormat >= 0.5 ? raw * TEXPIX_LEVEL_FILL : raw;
 }
 
 // Convenience: level of the font pixel at fontPx, sampled from a texture object.
-// Usage (built-in pipeline): TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx)
-#define TexpixSampleLevel_Tex2D(tex, texelSize, fontPx) \
-    TexpixExtractLevel(tex2D((tex), TexpixAtlasUV((fontPx), (texelSize))).r, TexpixSubPixel(fontPx))
+// Usage (built-in pipeline):
+//   TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx, i.atlasFormat)
+#define TexpixSampleLevel_Tex2D(tex, texelSize, fontPx, atlasFormat) \
+    TexpixExtractLevel(tex2D((tex), TexpixAtlasUV((fontPx), (texelSize), (atlasFormat))).r, \
+                       TexpixSubPixel((fontPx), (atlasFormat)), (atlasFormat))
 
 // Converts an 8-bit gamma-space UI color to the shader's working color space.
 // In linear projects this matches Unity's UIGammaToLinear (UnityUI.cginc): a piecewise
@@ -79,21 +99,24 @@ float4 TexpixUIVertexColor(float4 vertexColor, float alwaysGammaSpace)
     return vertexColor;
 }
 
-// Decodes the outline color and mode packed into uv0.zw by TexpixVertexFormat:
+// Decodes the outline color/mode and the atlas format packed into uv0.zw by
+// TexpixVertexFormat:
 //   z = R * 256 + G
-//   w = B * 1024 + A * 4 + mode
+//   w = format * 262144 + B * 1024 + A * 4 + mode
 // Both are exact integers in float32, so interpolating them across a quad (whose
 // corners all carry the same value) is lossless. Call this in the vertex shader and
 // interpolate the results, not the packed values.
 // The channels are 8-bit gamma-space values (like uGUI vertex colors), so the decoded
 // color is converted to the working color space here.
-void TexpixUnpackOutline(float2 packed, out float4 outlineColor, out float outlineMode)
+void TexpixUnpackOutline(float2 packed, out float4 outlineColor, out float outlineMode, out float atlasFormat)
 {
     float rg = floor(packed.x + 0.5);
     float r = floor(rg / 256.0);
     float g = rg - r * 256.0;
 
     float rest = floor(packed.y + 0.5);
+    atlasFormat = floor(rest / 262144.0);
+    rest -= atlasFormat * 262144.0;
     float b = floor(rest / 1024.0);
     rest -= b * 1024.0;
     float a = floor(rest / 4.0);
@@ -103,7 +126,8 @@ void TexpixUnpackOutline(float2 packed, out float4 outlineColor, out float outli
 }
 
 // Resolves a level into fill / outline / transparent using an outline mode
-// (TEXPIX_OUTLINE_*). Returns straight-alpha color.
+// (TEXPIX_OUTLINE_*). Returns straight-alpha color. Format-agnostic: a fill-only
+// atlas never produces an outline level, so the mode has no effect there.
 float4 TexpixShade(float level, float4 fillColor, float4 outlineColor, float outlineMode)
 {
     float isFill = step(2.5, level);

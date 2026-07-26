@@ -64,7 +64,7 @@ Shader "Texpix/Samples/Rainbow"
             {
                 float4 vertex : POSITION;
                 float4 color : COLOR;
-                // xy = atlas font-pixel coords, zw = packed outline color/mode.
+                // xy = atlas font-pixel coords, zw = packed outline color/mode + atlas format.
                 float4 texcoord : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
@@ -73,8 +73,8 @@ Shader "Texpix/Samples/Rainbow"
             {
                 float4 vertex : SV_POSITION;
                 fixed4 color : COLOR;
-                // xy = atlas font-pixel coords, z = outline mode.
-                float3 fontPx : TEXCOORD0;
+                // xy = atlas font-pixel coords, z = outline mode, w = atlas format.
+                float4 fontPx : TEXCOORD0;
                 float4 worldPosition : TEXCOORD1;
                 fixed4 outlineColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
@@ -97,8 +97,9 @@ Shader "Texpix/Samples/Rainbow"
                 o.vertex = UnityObjectToClipPos(o.worldPosition);
                 float4 outlineColor;
                 float outlineMode;
-                TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode);
-                o.fontPx = float3(v.texcoord.xy, outlineMode);
+                float atlasFormat;
+                TexpixUnpackOutline(v.texcoord.zw, outlineColor, outlineMode, atlasFormat);
+                o.fontPx = float4(v.texcoord.xy, outlineMode, atlasFormat);
                 o.outlineColor = outlineColor;
                 o.color = TexpixUIVertexColor(v.color, _UIVertexColorAlwaysGammaSpace);
                 return o;
@@ -114,7 +115,7 @@ Shader "Texpix/Samples/Rainbow"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx.xy);
+                float level = TexpixSampleLevel_Tex2D(_MainTex, _MainTex_TexelSize, i.fontPx.xy, i.fontPx.w);
 
                 float hue = frac(i.fontPx.x * _HueScale + _Time.y * _HueSpeed);
                 fixed4 fill = fixed4(HueToRgb(hue), 1.0) * i.color;

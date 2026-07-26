@@ -8,15 +8,36 @@ using Object = UnityEngine.Object;
 namespace Texpix
 {
     /// <summary>
-    ///     2bpp glyph atlas backed by a single-channel R8 texture. One texel packs
-    ///     4 horizontal font pixels (2 bits each, LSB first). Space is managed as a grid
-    ///     of fixed-size cells with O(1) free-list allocation. The texture's CPU pixel
-    ///     buffer is the authoritative storage; call <see cref="ApplyIfDirty" /> to upload.
+    ///     How many bits a Texpix atlas spends on one font pixel, and therefore which
+    ///     pixel classes it can store.
+    /// </summary>
+    public enum TexpixAtlasFormat
+    {
+        /// <summary>
+        ///     2 bits per font pixel, 4 pixels per texel: fill plus both outline classes
+        ///     (see <see cref="GlyphClassifier" />).
+        /// </summary>
+        Outline = 0,
+
+        /// <summary>
+        ///     1 bit per font pixel, 8 pixels per texel: fill only. Half the atlas memory,
+        ///     but no outline pixels are stored, so outline modes have nothing to draw.
+        /// </summary>
+        FillOnly = 1
+    }
+
+    /// <summary>
+    ///     Glyph atlas backed by a single-channel R8 texture. One texel packs
+    ///     <see cref="PixelsPerTexel" /> horizontal font pixels (LSB first) at
+    ///     <see cref="BitsPerPixel" /> bits each, as chosen by the atlas
+    ///     <see cref="Format" />. Space is managed as a grid of fixed-size cells with O(1)
+    ///     free-list allocation. The texture's CPU pixel buffer is the authoritative
+    ///     storage; call <see cref="ApplyIfDirty" /> to upload.
     /// </summary>
     public sealed class TexpixAtlas : IDisposable
     {
-        private const int PixelsPerTexel = 4;
         private readonly int _cols;
+        private readonly int _levelMask;
 
         private readonly int _maxHeightPx;
         private readonly Stack<int> _releasedCells = new();
@@ -25,10 +46,15 @@ namespace Texpix
         private int _rows;
 
         public TexpixAtlas(int cellWidthPx, int cellHeightPx, int widthPx = 256, int initialHeightPx = 64,
-            int maxHeightPx = 4096)
+            int maxHeightPx = 4096, TexpixAtlasFormat format = TexpixAtlasFormat.Outline)
         {
             if (cellWidthPx <= 0 || cellHeightPx <= 0)
                 throw new ArgumentOutOfRangeException(nameof(cellWidthPx), "Cell size must be positive.");
+
+            Format = format;
+            BitsPerPixel = BitsPerPixelOf(format);
+            PixelsPerTexel = 8 / BitsPerPixel;
+            _levelMask = (1 << BitsPerPixel) - 1;
 
             CellWidthPx = AlignUp(cellWidthPx, PixelsPerTexel);
             CellHeightPx = cellHeightPx;
@@ -42,7 +68,15 @@ namespace Texpix
 
         public Texture2D Texture { get; private set; }
 
-        /// <summary>Atlas width in font pixels (texture width × 4).</summary>
+        public TexpixAtlasFormat Format { get; }
+
+        /// <summary>Bits one font pixel occupies: 2 for <see cref="TexpixAtlasFormat.Outline" />, 1 for fill-only.</summary>
+        public int BitsPerPixel { get; }
+
+        /// <summary>Font pixels packed into one R8 texel: 4 at 2bpp, 8 at 1bpp.</summary>
+        public int PixelsPerTexel { get; }
+
+        /// <summary>Atlas width in font pixels (texture width × <see cref="PixelsPerTexel" />).</summary>
         public int WidthPx { get; }
 
         public int HeightPx { get; private set; }
@@ -62,12 +96,24 @@ namespace Texpix
         /// <summary>Raised when the texture object is replaced (atlas growth).</summary>
         public event Action TextureRecreated;
 
+        /// <summary>Bits one font pixel occupies in the given format.</summary>
+        public static int BitsPerPixelOf(TexpixAtlasFormat format)
+        {
+            return format == TexpixAtlasFormat.FillOnly ? 1 : 2;
+        }
+
+        /// <summary>Font pixels packed into one R8 texel in the given format.</summary>
+        public static int PixelsPerTexelOf(TexpixAtlasFormat format)
+        {
+            return 8 / BitsPerPixelOf(format);
+        }
+
         private static int AlignUp(int value, int alignment)
         {
             return (value + alignment - 1) / alignment * alignment;
         }
 
-        private static Texture2D CreateTexture(int widthPx, int heightPx)
+        private Texture2D CreateTexture(int widthPx, int heightPx)
         {
             var texture = new Texture2D(widthPx / PixelsPerTexel, heightPx, TextureFormat.R8, false, true)
             {
@@ -147,8 +193,11 @@ namespace Texpix
         }
 
         /// <summary>
-        ///     Writes a level bitmap (one byte per font pixel, values 0–3, row-major with
-        ///     y=0 at the bottom) into the given cell origin. The rest of the cell is cleared.
+        ///     Writes a level bitmap (one byte per font pixel, row-major with y=0 at the
+        ///     bottom) into the given cell origin. The rest of the cell is cleared.
+        ///     Levels are truncated to <see cref="BitsPerPixel" />, so a
+        ///     <see cref="TexpixAtlasFormat.FillOnly" /> atlas expects a binary (0/1) bitmap
+        ///     and an <see cref="TexpixAtlasFormat.Outline" /> atlas the 0–3 classifier output.
         /// </summary>
         public void WriteGlyph(Vector2Int originPx, ReadOnlySpan<byte> levels, int w, int h)
         {
@@ -173,14 +222,14 @@ namespace Texpix
             for (var y = 0; y < h; y++)
             for (var x = 0; x < w; x++)
             {
-                var level = levels[y * w + x];
+                var level = levels[y * w + x] & _levelMask;
                 if (level == 0)
                     continue;
                 var px = originPx.x + x;
                 var py = originPx.y + y;
-                var byteIndex = py * rowStride + (px >> 2);
-                var shift = (px & 3) * 2;
-                data[byteIndex] = (byte)(data[byteIndex] | ((level & 3) << shift));
+                var byteIndex = py * rowStride + px / PixelsPerTexel;
+                var shift = px % PixelsPerTexel * BitsPerPixel;
+                data[byteIndex] = (byte)(data[byteIndex] | (level << shift));
             }
 
             _dirty = true;
@@ -190,8 +239,8 @@ namespace Texpix
         public byte GetLevel(int px, int py)
         {
             var data = Texture.GetPixelData<byte>(0);
-            var byteIndex = py * (WidthPx / PixelsPerTexel) + (px >> 2);
-            return (byte)((data[byteIndex] >> ((px & 3) * 2)) & 3);
+            var byteIndex = py * (WidthPx / PixelsPerTexel) + px / PixelsPerTexel;
+            return (byte)((data[byteIndex] >> (px % PixelsPerTexel * BitsPerPixel)) & _levelMask);
         }
 
         /// <summary>Releases every cell and zeroes the texture (atlas reset on exhaustion).</summary>

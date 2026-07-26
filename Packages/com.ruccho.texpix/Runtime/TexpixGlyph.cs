@@ -2,8 +2,8 @@ namespace Texpix
 {
     /// <summary>
     ///     A glyph entry in a Texpix atlas. All values are integer font pixels.
-    ///     The bitmap rect includes the 1px outline padding on every side; bearings are
-    ///     already adjusted for that padding.
+    ///     The bitmap rect includes the atlas's padding ring (1px on every side for an
+    ///     outline atlas, none for a fill-only one); bearings are already adjusted for it.
     /// </summary>
     public struct TexpixGlyph
     {

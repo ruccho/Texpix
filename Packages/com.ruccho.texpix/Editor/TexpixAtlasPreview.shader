@@ -1,14 +1,16 @@
-// Editor-only preview for Texpix 2bpp atlases. Decoded mode expands every texel
-// into its 4 font pixels and color-codes them by level (the same unpacking the
-// runtime shader does, via Texpix.hlsl); raw mode shows the packed R8 bytes as
+// Editor-only preview for Texpix atlases. Decoded mode expands every texel into its
+// font pixels (4 at 2bpp, 8 at 1bpp) and color-codes them by level (the same unpacking
+// the runtime shader does, via Texpix.hlsl); raw mode shows the packed R8 bytes as
 // grayscale. The quad is expected to already carry the right aspect ratio:
-// 4*width x height in decoded mode, width x height in raw mode.
+// pixelsPerTexel*width x height in decoded mode, width x height in raw mode.
 Shader "Hidden/Texpix/Atlas Preview"
 {
     Properties
     {
         _MainTex ("Atlas", 2D) = "black" {}
         _Raw ("Raw Mode", Float) = 0
+        // TEXPIX_FORMAT_* of the previewed atlas.
+        _AtlasFormat ("Atlas Format", Float) = 0
         // Atlas size in texels; xy = (width, height).
         _AtlasSize ("Atlas Size", Vector) = (1, 1, 0, 0)
         _FillColor ("Fill", Color) = (1, 1, 1, 1)
@@ -56,6 +58,7 @@ Shader "Hidden/Texpix/Atlas Preview"
             sampler2D _MainTex;
             float4 _AtlasSize;
             float _Raw;
+            float _AtlasFormat;
             fixed4 _FillColor;
             fixed4 _EdgeOutlineColor;
             fixed4 _DiagonalOutlineColor;
@@ -77,8 +80,9 @@ Shader "Hidden/Texpix/Atlas Preview"
 
                 // _TexelSize layout: (1/w, 1/h, w, h).
                 float4 texelSize = float4(1.0 / _AtlasSize.x, 1.0 / _AtlasSize.y, _AtlasSize.x, _AtlasSize.y);
-                float2 fontPx = float2(i.texcoord.x * _AtlasSize.x * 4.0, i.texcoord.y * _AtlasSize.y);
-                float level = TexpixSampleLevel_Tex2D(_MainTex, texelSize, fontPx);
+                float2 fontPx = float2(i.texcoord.x * _AtlasSize.x * TexpixPixelsPerTexel(_AtlasFormat),
+                                       i.texcoord.y * _AtlasSize.y);
+                float level = TexpixSampleLevel_Tex2D(_MainTex, texelSize, fontPx, _AtlasFormat);
 
                 fixed4 decoded = _OutsideColor;
                 decoded = level > TEXPIX_LEVEL_DIAGONAL_OUTLINE - 0.5 ? _DiagonalOutlineColor : decoded;

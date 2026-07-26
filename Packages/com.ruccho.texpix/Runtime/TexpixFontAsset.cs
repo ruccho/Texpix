@@ -11,7 +11,7 @@ using UnityEditor;
 namespace Texpix
 {
     /// <summary>
-    ///     A pixel font with a dynamically populated 2bpp atlas. Glyphs are rasterized on
+    ///     A pixel font with a dynamically populated atlas. Glyphs are rasterized on
     ///     demand with GlyphRenderMode.RASTER at the font's native pixel size, classified
     ///     into fill/outline levels and packed into the grid atlas.
     /// </summary>
@@ -26,6 +26,13 @@ namespace Texpix
     {
         [SerializeField] private Font sourceFont;
         [SerializeField] [Min(4)] private int pixelSize = 10;
+
+        [SerializeField]
+        [Tooltip("Outline: 2 bits per font pixel, storing the 4- and 8-neighbor outline classes.\n" +
+                 "Fill Only: 1 bit per font pixel — about half the atlas memory, but text using " +
+                 "this font cannot draw an outline.")]
+        private TexpixAtlasFormat atlasFormat = TexpixAtlasFormat.Outline;
+
         [SerializeField] private TexpixAtlasMode atlasMode = TexpixAtlasMode.Dynamic;
         [SerializeField] private TexpixFontAsset[] fallbackFonts = Array.Empty<TexpixFontAsset>();
         [SerializeField] private int atlasWidth = 256;
@@ -43,6 +50,14 @@ namespace Texpix
         [SerializeField] [HideInInspector] private int bakedAscent;
         [SerializeField] [HideInInspector] private int bakedDescent;
         [SerializeField] [HideInInspector] private int bakedLineHeight;
+
+        /// <summary>
+        ///     Format the baked atlas was written in. Frozen at bake time because the glyph
+        ///     metrics stored alongside it depend on it (the padding ring differs), so it can
+        ///     legitimately differ from <see cref="atlasFormat" /> until the asset is rebaked.
+        /// </summary>
+        [SerializeField] [HideInInspector] private TexpixAtlasFormat bakedAtlasFormat = TexpixAtlasFormat.Outline;
+
         [NonSerialized] private TexpixAtlas _atlas;
         [NonSerialized] private Dictionary<uint, TexpixGlyph> _glyphs;
 
@@ -56,6 +71,21 @@ namespace Texpix
         public Font SourceFont => sourceFont;
         public int PixelSize => pixelSize;
         public TexpixAtlasMode AtlasMode => atlasMode;
+
+        /// <summary>
+        ///     Format of the atlas this asset actually renders from — what the shader has to
+        ///     decode. In static mode that is the format frozen at bake time, not necessarily
+        ///     the configured one.
+        /// </summary>
+        public TexpixAtlasFormat AtlasFormat =>
+            atlasMode == TexpixAtlasMode.Static ? bakedAtlasFormat : atlasFormat;
+
+        /// <summary>
+        ///     Padding ring around each glyph bitmap, in font pixels. Outline atlases keep 1px
+        ///     so outline pixels never bleed into the neighboring cell; fill-only atlases store
+        ///     no outline pixels and need none.
+        /// </summary>
+        private int GlyphPadding => atlasFormat == TexpixAtlasFormat.Outline ? 1 : 0;
 
         /// <summary>True when the asset can produce glyphs (source font present, or baked data in static mode).</summary>
         public bool IsReady => atlasMode == TexpixAtlasMode.Static ? bakedAtlasTexture != null : sourceFont != null;
@@ -129,13 +159,15 @@ namespace Texpix
         /// <summary>Raised when the atlas texture changes (new glyphs or texture recreation).</summary>
         public event Action AtlasChanged;
 
-        public static TexpixFontAsset Create(Font font, int pixelSize, int atlasWidth = 256, int atlasMaxHeight = 4096)
+        public static TexpixFontAsset Create(Font font, int pixelSize, int atlasWidth = 256, int atlasMaxHeight = 4096,
+            TexpixAtlasFormat atlasFormat = TexpixAtlasFormat.Outline)
         {
             var asset = CreateInstance<TexpixFontAsset>();
             asset.sourceFont = font;
             asset.pixelSize = pixelSize;
             asset.atlasWidth = atlasWidth;
             asset.atlasMaxHeight = atlasMaxHeight;
+            asset.atlasFormat = atlasFormat;
             return asset;
         }
 
@@ -208,12 +240,13 @@ namespace Texpix
             Descent = Mathf.RoundToInt(face.descentLine);
             LineHeight = Mathf.Max(1, Mathf.RoundToInt(face.lineHeight));
 
-            // 1px outline padding on each side; +2 vertical slack for glyphs that
-            // exceed ascent-descent (rare but possible in stylized fonts).
-            var cellWidth = pixelSize + 2;
-            var cellHeight = Ascent - Descent + 4;
+            // Glyph padding on each side (see GlyphPadding); +2 vertical slack for glyphs
+            // that exceed ascent-descent (rare but possible in stylized fonts).
+            var padding = GlyphPadding;
+            var cellWidth = pixelSize + padding * 2;
+            var cellHeight = Ascent - Descent + 2 + padding * 2;
             _atlas?.Dispose();
-            _atlas = new TexpixAtlas(cellWidth, cellHeight, atlasWidth, cellHeight * 4, atlasMaxHeight);
+            _atlas = new TexpixAtlas(cellWidth, cellHeight, atlasWidth, cellHeight * 4, atlasMaxHeight, atlasFormat);
             _atlas.TextureRecreated += () => AtlasChanged?.Invoke();
 
             _glyphs = new Dictionary<uint, TexpixGlyph>();
@@ -324,8 +357,9 @@ namespace Texpix
             if (rect.width <= 0 || rect.height <= 0)
                 return glyph;
 
-            var paddedWidth = rect.width + 2;
-            var paddedHeight = rect.height + 2;
+            var padding = GlyphPadding;
+            var paddedWidth = rect.width + padding * 2;
+            var paddedHeight = rect.height + padding * 2;
             if (paddedWidth > _atlas.CellWidthPx || paddedHeight > _atlas.CellHeightPx)
             {
                 Debug.LogWarning(
@@ -333,12 +367,14 @@ namespace Texpix
                 return glyph;
             }
 
-            // Pooled scratch buffers: both are fully overwritten before being read
+            // Pooled scratch buffers: each is fully overwritten before being read
             // (the binary copy below, Classify writing every output pixel), so the
             // rented arrays need no clearing.
             var pool = ArrayPool<byte>.Shared;
             var binaryBuffer = pool.Rent(rect.width * rect.height);
-            var levelsBuffer = pool.Rent(paddedWidth * paddedHeight);
+            // Only outline atlases need the classified level bitmap; a fill-only atlas
+            // stores the binary bitmap as-is (a set bit is the fill level at 1bpp).
+            var levelsBuffer = padding > 0 ? pool.Rent(paddedWidth * paddedHeight) : null;
             try
             {
                 var binary = binaryBuffer.AsSpan(0, rect.width * rect.height);
@@ -349,8 +385,17 @@ namespace Texpix
                         binary[y * rect.width + x] = scratchData[srcRow + x] > 127 ? (byte)1 : (byte)0;
                 }
 
-                var levels = levelsBuffer.AsSpan(0, paddedWidth * paddedHeight);
-                GlyphClassifier.Classify(binary, rect.width, rect.height, levels);
+                ReadOnlySpan<byte> levels;
+                if (levelsBuffer != null)
+                {
+                    var classified = levelsBuffer.AsSpan(0, paddedWidth * paddedHeight);
+                    GlyphClassifier.Classify(binary, rect.width, rect.height, classified);
+                    levels = classified;
+                }
+                else
+                {
+                    levels = binary;
+                }
 
                 if (!_atlas.TryAllocateCell(out var cellIndex, out var origin))
                 {
@@ -379,13 +424,14 @@ namespace Texpix
             finally
             {
                 pool.Return(binaryBuffer);
-                pool.Return(levelsBuffer);
+                if (levelsBuffer != null)
+                    pool.Return(levelsBuffer);
             }
 
             glyph.Width = paddedWidth;
             glyph.Height = paddedHeight;
-            glyph.BearingX = Mathf.RoundToInt(rendered.metrics.horizontalBearingX) - 1;
-            glyph.BearingY = Mathf.RoundToInt(rendered.metrics.horizontalBearingY) + 1;
+            glyph.BearingX = Mathf.RoundToInt(rendered.metrics.horizontalBearingX) - padding;
+            glyph.BearingY = Mathf.RoundToInt(rendered.metrics.horizontalBearingY) + padding;
             return glyph;
         }
 
@@ -535,6 +581,7 @@ namespace Texpix
                 bakedAscent = Ascent;
                 bakedDescent = Descent;
                 bakedLineHeight = LineHeight;
+                bakedAtlasFormat = atlasFormat;
                 atlasMode = TexpixAtlasMode.Static;
             }
             catch
@@ -567,6 +614,7 @@ namespace Texpix
 
             bakedGlyphs = Array.Empty<BakedGlyph>();
             bakedKerningPairs = Array.Empty<BakedKerningPair>();
+            bakedAtlasFormat = atlasFormat;
             atlasMode = TexpixAtlasMode.Dynamic;
             EditorUtility.SetDirty(this);
             if (EditorUtility.IsPersistent(this))
@@ -577,6 +625,12 @@ namespace Texpix
         internal Texture2D BakedAtlasTextureForInspector => bakedAtlasTexture;
         internal int BakedGlyphCount => bakedGlyphs.Length;
         internal int BakedKerningCount => bakedKerningPairs.Length;
+
+        /// <summary>Format the baked atlas is stored in; differs from the configured one until a rebake.</summary>
+        internal TexpixAtlasFormat BakedAtlasFormatForInspector => bakedAtlasFormat;
+
+        /// <summary>The format configured on the asset, regardless of what is baked.</summary>
+        internal TexpixAtlasFormat ConfiguredAtlasFormatForInspector => atlasFormat;
 
         /// <summary>The live dynamic atlas, or null while the asset has no runtime state.</summary>
         internal TexpixAtlas DynamicAtlasForInspector => _atlas;

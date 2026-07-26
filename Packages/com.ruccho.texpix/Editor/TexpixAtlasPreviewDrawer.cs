@@ -6,7 +6,7 @@ namespace Texpix.Editor
 {
     internal enum TexpixAtlasPreviewMode
     {
-        /// <summary>Unpacks the 2bpp payload and colors each font pixel by its level.</summary>
+        /// <summary>Unpacks the packed payload and colors each font pixel by its level.</summary>
         Decoded = 0,
 
         /// <summary>Shows the packed R8 texels as grayscale, one texel per preview pixel.</summary>
@@ -33,6 +33,7 @@ namespace Texpix.Editor
         private static readonly float[] ZoomScales = { 0f, 1f, 2f, 4f, 8f };
 
         private static readonly int RawId = Shader.PropertyToID("_Raw");
+        private static readonly int AtlasFormatId = Shader.PropertyToID("_AtlasFormat");
         private static readonly int AtlasSizeId = Shader.PropertyToID("_AtlasSize");
 
         private static readonly Color BackgroundColor = new(0.14f, 0.14f, 0.14f, 1f);
@@ -56,7 +57,7 @@ namespace Texpix.Editor
         }
 
         /// <summary>Draws the mode/zoom toolbar followed by the atlas image.</summary>
-        public void Draw(Texture2D atlas)
+        public void Draw(Texture2D atlas, TexpixAtlasFormat format)
         {
             LoadPrefs();
 
@@ -78,8 +79,8 @@ namespace Texpix.Editor
                 return;
 
             var decoded = _mode == TexpixAtlasPreviewMode.Decoded;
-            // Decoded mode expands each texel into 4 horizontal font pixels.
-            float srcWidth = decoded ? atlas.width * 4 : atlas.width;
+            // Decoded mode expands each texel into the font pixels it packs.
+            float srcWidth = decoded ? atlas.width * TexpixAtlas.PixelsPerTexelOf(format) : atlas.width;
             float srcHeight = atlas.height;
             if (srcWidth <= 0f || srcHeight <= 0f)
                 return;
@@ -98,16 +99,16 @@ namespace Texpix.Editor
             var rect = GUILayoutUtility.GetRect(drawWidth, drawHeight,
                 GUILayout.ExpandWidth(false), GUILayout.ExpandHeight(false));
             if (Event.current.type == EventType.Repaint)
-                DrawAtlas(rect, atlas, decoded);
+                DrawAtlas(rect, atlas, decoded, format);
 
             if (scrolled)
                 EditorGUILayout.EndScrollView();
 
             if (decoded)
-                DrawLegend();
+                DrawLegend(format);
         }
 
-        private void DrawAtlas(Rect rect, Texture2D atlas, bool decoded)
+        private void DrawAtlas(Rect rect, Texture2D atlas, bool decoded, TexpixAtlasFormat format)
         {
             EditorGUI.DrawRect(rect, BackgroundColor);
 
@@ -121,17 +122,23 @@ namespace Texpix.Editor
 
             material.mainTexture = atlas;
             material.SetFloat(RawId, decoded ? 0f : 1f);
+            material.SetFloat(AtlasFormatId, (float)format);
             material.SetVector(AtlasSizeId, new Vector4(atlas.width, atlas.height, 0f, 0f));
             EditorGUI.DrawPreviewTexture(rect, atlas, material, ScaleMode.StretchToFill);
         }
 
-        private static void DrawLegend()
+        private static void DrawLegend(TexpixAtlasFormat format)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
                 DrawSwatch(FillColor, "Fill");
-                DrawSwatch(EdgeOutlineColor, "Edge outline");
-                DrawSwatch(DiagonalOutlineColor, "Diagonal outline");
+                // A fill-only atlas stores no outline levels, so those swatches would be dead legend.
+                if (format == TexpixAtlasFormat.Outline)
+                {
+                    DrawSwatch(EdgeOutlineColor, "Edge outline");
+                    DrawSwatch(DiagonalOutlineColor, "Diagonal outline");
+                }
+
                 GUILayout.FlexibleSpace();
             }
         }

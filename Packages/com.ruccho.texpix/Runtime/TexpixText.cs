@@ -9,8 +9,8 @@ namespace Texpix
 {
     /// <summary>
     ///     uGUI text component rendering a Texpix pixel-font atlas. Vertices carry atlas
-    ///     font-pixel coordinates and the packed outline color/mode in uv0 (see
-    ///     <see cref="TexpixVertexFormat" />); the shader decodes the 2bpp atlas per pixel.
+    ///     font-pixel coordinates and the packed outline color/mode plus atlas format in
+    ///     uv0 (see <see cref="TexpixVertexFormat" />); the shader decodes the atlas per pixel.
     ///     Because nothing per-component lives in material properties, every component
     ///     shares one material and uGUI can batch them.
     /// </summary>
@@ -560,7 +560,9 @@ namespace Texpix
                     Mathf.Round(origin.y / pixelScale) * pixelScale);
 
             var componentColor = color;
-            var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode);
+            // The payload is per-font: the shader needs the format of the atlas each quad
+            // samples, and a fallback font may be packed differently than the primary one.
+            var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode, font.AtlasFormat);
             foreach (var quad in SQuads)
             {
                 if (quad.FontIndex != 0)
@@ -586,17 +588,21 @@ namespace Texpix
                 vh.AddTriangle(vertexIndex + 2, vertexIndex + 3, vertexIndex);
             }
 
-            UploadFallbackQuads(origin, packedOutline);
+            UploadFallbackQuads(origin);
             UploadSpriteQuads(origin);
         }
 
-        private void UploadFallbackQuads(Vector2 origin, Vector2 packedOutline)
+        private void UploadFallbackQuads(Vector2 origin)
         {
             var componentColor = color;
+            var chain = font.ResolvedChain;
             for (var fi = 0; fi < _fallbackSubs.Count; fi++)
             {
                 var sub = _fallbackSubs[fi];
                 var fontIndex = fi + 1;
+                // Each fallback samples its own atlas, so the format travels per sub-mesh.
+                var packedOutline = TexpixVertexFormat.PackOutline(outlineColor, outlineMode,
+                    fontIndex < chain.Count ? chain[fontIndex].AtlasFormat : TexpixAtlasFormat.Outline);
 
                 SSpriteVerts.Clear();
                 SSpriteColors.Clear();

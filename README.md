@@ -14,7 +14,7 @@ TextMesh Pro is built around SDF (signed distance field) text, which is designed
 
 - **Pixel-perfect by default.** No SDF, no anti-aliasing, no sampling settings to tune. Glyphs are rasterized once at the font's native pixel size and drawn with nearest-neighbor filtering, snapped to the pixel grid. Set the font's pixel size and an integer scale, and it just looks right — at any zoom level.
 - **Outlines that actually work.** 4-neighbor and 8-neighbor pixel outlines — the classic 1px game-UI look — are a single dropdown. TMP's dilate-based outline is a distance-field effect and cannot produce a clean 1px neighbor outline. In Texpix, the outline costs no extra texture, no extra draw call, and no extra pass: it is already encoded in the atlas.
-- **Cheap atlases.** Each glyph pixel needs only 4 states, so 4 font pixels are packed into one byte of an R8 texture. That's roughly 1/8 the memory of an equivalent RGBA atlas — and it holds the outline data too.
+- **Cheap atlases.** Each glyph pixel needs only 4 states, so 4 font pixels are packed into one byte of an R8 texture. That's roughly 1/8 the memory of an equivalent RGBA atlas — and it holds the outline data too. Don't need outlines? Switch the font asset to **Fill Only** and it drops to 1 bit per pixel, 8 to a byte.
 
 Use TMP for body text and free scaling. Use Texpix when the font is the art.
 
@@ -84,6 +84,7 @@ Unknown tags are rendered literally rather than swallowed.
 | --- | --- |
 | **Source Font** | The TTF/OTF to rasterize. |
 | **Pixel Size** | The font's native design size, in pixels. |
+| **Atlas Format** | `Outline` (2 bits per font pixel, outline classes included) or `Fill Only` (1 bit per font pixel, roughly half the atlas memory — text using the font cannot draw an outline). |
 | **Atlas Mode** | `Dynamic` (glyphs added on demand) or `Static` (baked in the editor). |
 | **Fallback Fonts** | Other font assets searched, in order, for glyphs this font lacks. Chains are flattened depth-first and cycles are ignored. |
 | **Atlas Width / Max Height** | Size bounds of the dynamic atlas. It starts small and doubles in height as needed. |
@@ -97,7 +98,7 @@ The inspector has **Bake** / **Clear** buttons and an atlas preview. Baking seri
 
 ### Custom shaders
 
-`Runtime/Shaders/Texpix.hlsl` is a public include exposing the atlas decode API (`TexpixAtlasUV`, `TexpixSubPixel`, `TexpixExtractLevel`, `TexpixUnpackOutline`, `TexpixShade`). Import the **Custom Shader** sample from Package Manager for a working example (hue-cycling fill with the full UI stencil/clip boilerplate). Vertices carry atlas font-pixel coordinates in `uv0.xy` and the packed outline color/mode in `uv0.zw`. Assign your material to the component's standard `material` slot; fallback sub-renderers inherit it.
+`Runtime/Shaders/Texpix.hlsl` is a public include exposing the atlas decode API (`TexpixAtlasUV`, `TexpixSubPixel`, `TexpixExtractLevel`, `TexpixUnpackOutline`, `TexpixShade`). Import the **Custom Shader** sample from Package Manager for a working example (hue-cycling fill with the full UI stencil/clip boilerplate). Vertices carry atlas font-pixel coordinates in `uv0.xy` and the packed outline color/mode plus atlas format in `uv0.zw`. Assign your material to the component's standard `material` slot; fallback sub-renderers inherit it.
 
 ---
 
@@ -108,6 +109,8 @@ The inspector has **Bake** / **Clear** buttons and an atlas preview. Baking seri
 **The atlas is 2 bits per font pixel.** When a glyph is rasterized, each of its pixels is classified into one of four levels: *fill*, *4-neighbor outline*, *diagonal-only outline*, or *outside* — computed once, at ingest time, from a 1-pixel padding ring around the bitmap. Four such pixels are packed into one byte of an R8 texture.
 
 **The outline is a shader switch.** Because both outline classes are already in the atlas, `Outline Mode` only changes which levels the shader treats as opaque: `None` draws level 3, `FourNeighbor` adds level 2, `EightNeighbor` adds level 1. No second pass, no dilation, no extra texture.
+
+**…and 1 bit if you opt out.** A font asset set to `Fill Only` stores a single bit per font pixel — 8 to a byte — with no classification pass and no padding ring, which is about 40–55 % less atlas texture depending on the pixel size. The format is per font asset, travels to the shader in the vertex stream (so batching is unaffected), and is frozen into static assets at bake time. It is a rendering-time no-op otherwise: fill-only pixels decode to the same fill level, and `Outline Mode` simply has nothing to draw.
 
 **Vertices carry font-pixel coordinates.** Quad UVs are integer atlas font-pixel positions, not normalized UVs; the shader decodes the sub-pixel within the texel itself. Layout likewise runs entirely in integer font-pixel space and is scaled by Pixel Scale at mesh build, which is why the result is exact rather than approximately aligned.
 
