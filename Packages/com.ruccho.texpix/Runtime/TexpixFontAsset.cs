@@ -577,6 +577,19 @@ namespace Texpix
         internal Texture2D BakedAtlasTextureForInspector => bakedAtlasTexture;
         internal int BakedGlyphCount => bakedGlyphs.Length;
         internal int BakedKerningCount => bakedKerningPairs.Length;
+
+        /// <summary>The live dynamic atlas, or null while the asset has no runtime state.</summary>
+        internal TexpixAtlas DynamicAtlasForInspector => _atlas;
+
+        /// <summary>Codepoints resolved so far in dynamic mode, including advance-only ones.</summary>
+        internal int DynamicGlyphCountForInspector => _glyphs?.Count ?? 0;
+
+        /// <summary>Drops the dynamic atlas; it is rebuilt from scratch on the next glyph lookup.</summary>
+        internal void ResetDynamicAtlasForInspector()
+        {
+            ReleaseRuntimeState();
+            AtlasChanged?.Invoke();
+        }
 #endif
     }
 }

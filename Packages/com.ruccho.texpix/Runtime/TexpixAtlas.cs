@@ -50,6 +50,9 @@ namespace Texpix
         public int CellHeightPx { get; }
         public int Capacity => _cols * _rows;
 
+        /// <summary>Cells currently holding a glyph (allocated minus released).</summary>
+        public int UsedCellCount => _highWaterMark - _releasedCells.Count;
+
         public void Dispose()
         {
             DestroyTexture(Texture);
