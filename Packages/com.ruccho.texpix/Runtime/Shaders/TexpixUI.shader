@@ -72,7 +72,7 @@ Shader "Texpix/UI Default"
                 fixed4 color : COLOR;
                 // xy = atlas font-pixel coords, z = outline mode, w = atlas format.
                 float4 fontPx : TEXCOORD0;
-                float4 worldPosition : TEXCOORD1;
+                float4 mask : TEXCOORD1;
                 fixed4 outlineColor : TEXCOORD2;
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -80,6 +80,8 @@ Shader "Texpix/UI Default"
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
             float4 _ClipRect;
+            float _UIMaskSoftnessX;
+            float _UIMaskSoftnessY;
             // Set globally by Unity; mirrors Canvas.vertexColorAlwaysGammaSpace.
             float _UIVertexColorAlwaysGammaSpace;
 
@@ -88,8 +90,17 @@ Shader "Texpix/UI Default"
                 v2f o;
                 UNITY_SETUP_INSTANCE_ID(v);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
-                o.worldPosition = v.vertex;
-                o.vertex = UnityObjectToClipPos(o.worldPosition);
+                o.vertex = UnityObjectToClipPos(v.vertex);
+
+                #ifdef UNITY_UI_CLIP_RECT
+                float2 pixelSize = o.vertex.w;
+                pixelSize /= abs(mul((float2x2)UNITY_MATRIX_P, _ScreenParams.xy));
+
+                float4 clampedRect = clamp(_ClipRect, -2e10, 2e10);
+                o.mask = float4(
+                    v.vertex.xy * 2.0 - clampedRect.xy - clampedRect.zw,
+                    0.25 / (0.25 * float2(_UIMaskSoftnessX, _UIMaskSoftnessY) + abs(pixelSize)));
+                #endif
 
                 float4 outlineColor;
                 float outlineMode;
@@ -107,7 +118,8 @@ Shader "Texpix/UI Default"
                 fixed4 color = TexpixShade(level, i.color, i.outlineColor, i.fontPx.z);
 
                 #ifdef UNITY_UI_CLIP_RECT
-                color.a *= UnityGet2DClipping(i.worldPosition.xy, _ClipRect);
+                fixed2 m = saturate((_ClipRect.zw - _ClipRect.xy - abs(i.mask.xy)) * i.mask.zw);
+                color.a *= m.x * m.y;
                 #endif
 
                 #ifdef UNITY_UI_ALPHACLIP
