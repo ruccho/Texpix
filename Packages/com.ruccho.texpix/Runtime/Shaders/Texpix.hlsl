@@ -17,6 +17,15 @@
 // (integers at quad corners) and the packed outline color/mode plus the atlas format
 // in uv0.zw (see TexpixUnpackOutline). All functions use float arithmetic only, so
 // they work on shader model 2.x targets.
+//
+// Precision rule: every integer decode below is written with multiplications by
+// power-of-two constants, floor, and comparisons — never division, fmod, or exp2.
+// Adding and multiplying are correctly rounded on every GPU (so an integer times
+// 0.25 is exact), whereas division is allowed several ULP of error (GLSL ES: 2.5 ULP,
+// Metal fast-math: reciprocal approximation). With a division, an exact quotient such
+// as 240 / 4 can come out as 59.99998, floor drops it to 59, and the extracted level
+// changes (0 becomes 3: an outside pixel rendered as fill). Observed on Apple Silicon
+// (Metal); desktop D3D11 happens to compute these exactly, which hid it.
 
 #ifndef TEXPIX_INCLUDED
 #define TEXPIX_INCLUDED
@@ -39,11 +48,25 @@ float TexpixPixelsPerTexel(float atlasFormat)
     return atlasFormat >= 0.5 ? 8.0 : 4.0;
 }
 
+// Reciprocal of TexpixPixelsPerTexel as an exact power-of-two constant.
+float TexpixInvPixelsPerTexel(float atlasFormat)
+{
+    return atlasFormat >= 0.5 ? 0.125 : 0.25;
+}
+
+// Index of the texel holding font pixel column x (x already floored).
+float TexpixTexelIndex(float x, float atlasFormat)
+{
+    return floor(x * TexpixInvPixelsPerTexel(atlasFormat));
+}
+
 // Converts a font-pixel coordinate to the UV of the texel containing it.
 // atlasTexelSize is the standard Unity _TexelSize vector of the atlas (1/w, 1/h, w, h).
+// The UV targets the texel center, so the rounding in the final multiply cannot move
+// the point sample onto a neighboring texel.
 float2 TexpixAtlasUV(float2 fontPx, float4 atlasTexelSize, float atlasFormat)
 {
-    float texelX = floor(floor(fontPx.x) / TexpixPixelsPerTexel(atlasFormat)) + 0.5;
+    float texelX = TexpixTexelIndex(floor(fontPx.x), atlasFormat) + 0.5;
     float texelY = floor(fontPx.y) + 0.5;
     return float2(texelX * atlasTexelSize.x, texelY * atlasTexelSize.y);
 }
@@ -51,7 +74,8 @@ float2 TexpixAtlasUV(float2 fontPx, float4 atlasTexelSize, float atlasFormat)
 // Sub-pixel index of a font-pixel coordinate within its texel (0..3 or 0..7).
 float TexpixSubPixel(float2 fontPx, float atlasFormat)
 {
-    return fmod(floor(fontPx.x), TexpixPixelsPerTexel(atlasFormat));
+    float x = floor(fontPx.x);
+    return x - TexpixTexelIndex(x, atlasFormat) * TexpixPixelsPerTexel(atlasFormat);
 }
 
 // Extracts the level of one font pixel from a sampled atlas value (R channel, 0..1).
@@ -60,9 +84,22 @@ float TexpixSubPixel(float2 fontPx, float atlasFormat)
 float TexpixExtractLevel(float atlasR, float subPixel, float atlasFormat)
 {
     float packedByte = floor(atlasR * 255.0 + 0.5);
-    float bits = atlasFormat >= 0.5 ? 1.0 : 2.0;
-    float raw = fmod(floor(packedByte / exp2(subPixel * bits)), exp2(bits));
-    return atlasFormat >= 0.5 ? raw * TEXPIX_LEVEL_FILL : raw;
+    float fillOnly = atlasFormat >= 0.5 ? 1.0 : 0.0;
+
+    // Right-shift the byte by subPixel * bitsPerPixel (0..7), one binary digit of the
+    // shift amount at a time: >>4, >>2, >>1. Each step is an exact multiply + floor.
+    float shift = fillOnly > 0.5 ? subPixel : subPixel * 2.0;
+    float q = packedByte;
+    q = shift >= 3.5 ? floor(q * 0.0625) : q;
+    shift = shift >= 3.5 ? shift - 4.0 : shift;
+    q = shift >= 1.5 ? floor(q * 0.25) : q;
+    shift = shift >= 1.5 ? shift - 2.0 : shift;
+    q = shift >= 0.5 ? floor(q * 0.5) : q;
+
+    // Keep the low 1 or 2 bits.
+    float bit1 = q - floor(q * 0.5) * 2.0;
+    float bits2 = q - floor(q * 0.25) * 4.0;
+    return fillOnly > 0.5 ? bit1 * TEXPIX_LEVEL_FILL : bits2;
 }
 
 // Convenience: level of the font pixel at fontPx, sampled from a texture object.
@@ -110,16 +147,18 @@ float4 TexpixUIVertexColor(float4 vertexColor, float alwaysGammaSpace)
 // color is converted to the working color space here.
 void TexpixUnpackOutline(float2 packed, out float4 outlineColor, out float outlineMode, out float atlasFormat)
 {
+    // Field extraction by multiplying with exact power-of-two reciprocals (see the
+    // precision rule at the top of this file).
     float rg = floor(packed.x + 0.5);
-    float r = floor(rg / 256.0);
+    float r = floor(rg * (1.0 / 256.0));
     float g = rg - r * 256.0;
 
     float rest = floor(packed.y + 0.5);
-    atlasFormat = floor(rest / 262144.0);
+    atlasFormat = floor(rest * (1.0 / 262144.0));
     rest -= atlasFormat * 262144.0;
-    float b = floor(rest / 1024.0);
+    float b = floor(rest * (1.0 / 1024.0));
     rest -= b * 1024.0;
-    float a = floor(rest / 4.0);
+    float a = floor(rest * 0.25);
 
     outlineMode = rest - a * 4.0;
     outlineColor = float4(TexpixUIGammaToWorkingSpace(float3(r, g, b) / 255.0), a / 255.0);
