@@ -74,15 +74,14 @@ Shader "Hidden/Texpix/Atlas Preview"
 
             fixed4 frag(v2f i) : SV_Target
             {
-                // Both modes are evaluated unconditionally to keep the texture fetches out
-                // of divergent flow control.
-                float raw = tex2D(_MainTex, i.texcoord).r;
-
                 // _TexelSize layout: (1/w, 1/h, w, h).
                 float4 texelSize = float4(1.0 / _AtlasSize.x, 1.0 / _AtlasSize.y, _AtlasSize.x, _AtlasSize.y);
                 float2 fontPx = float2(i.texcoord.x * _AtlasSize.x * TexpixPixelsPerTexel(_AtlasFormat),
                                        i.texcoord.y * _AtlasSize.y);
-                float level = TexpixSampleLevel_Tex2D(_MainTex, texelSize, fontPx, _AtlasFormat);
+                // Point-filtered R8: raw and decoded views need the same byte. Keep
+                // the center-sampled fetch unconditional and share it between both.
+                float raw = tex2D(_MainTex, TexpixAtlasUV(fontPx, texelSize, _AtlasFormat)).r;
+                float level = TexpixExtractLevel(raw, TexpixSubPixel(fontPx, _AtlasFormat), _AtlasFormat);
 
                 fixed4 decoded = _OutsideColor;
                 decoded = level > TEXPIX_LEVEL_DIAGONAL_OUTLINE - 0.5 ? _DiagonalOutlineColor : decoded;

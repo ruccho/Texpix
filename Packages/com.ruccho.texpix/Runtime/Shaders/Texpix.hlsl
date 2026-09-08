@@ -15,11 +15,12 @@
 //
 // Vertices are expected to carry *font pixel* coordinates of the atlas in uv0.xy
 // (integers at quad corners) and the packed outline color/mode plus the atlas format
-// in uv0.zw (see TexpixUnpackOutline). All functions use float arithmetic only, so
-// they work on shader model 2.x targets.
+// in uv0.zw (see TexpixUnpackOutline). All functions use float arithmetic only
+// and work on shader model 2.x targets.
 //
 // Precision rule: every integer decode below is written with multiplications by
-// power-of-two constants, floor, and comparisons — never division, fmod, or exp2.
+// power-of-two constants, floor/frac, and comparisons — never division, fmod, or
+// exp2. Keep coordinates and decode intermediates in float, not half/fixed.
 // Adding and multiplying are correctly rounded on every GPU (so an integer times
 // 0.25 is exact), whereas division is allowed several ULP of error (GLSL ES: 2.5 ULP,
 // Metal fast-math: reciprocal approximation). With a division, an exact quotient such
@@ -78,29 +79,78 @@ float TexpixSubPixel(float2 fontPx, float atlasFormat)
     return x - TexpixTexelIndex(x, atlasFormat) * TexpixPixelsPerTexel(atlasFormat);
 }
 
-// Extracts the level of one font pixel from a sampled atlas value (R channel, 0..1).
-// A fill-only atlas stores a single bit, expanded here to TEXPIX_LEVEL_FILL so that
-// downstream shading does not need to know the format.
+// Selects 2^-(shift + bitsPerPixel) without a variable shift, division, exp2,
+// lookup texture, or a serial floor/select ladder. texelPhase must be in [0, 1).
+// Four exact constants handle pairs of bits; the optional low bit handles 1bpp.
+// All of this is independent of the sampled byte, so it can overlap the fetch.
+float TexpixResidueScale(float texelPhase, bool fillOnly)
+{
+    float scale = texelPhase < 0.5
+        ? (texelPhase < 0.25 ? 0.25 : 0.0625)
+        : (texelPhase < 0.75 ? 0.015625 : 0.00390625);
+    return scale * ((fillOnly && frac(texelPhase * 4.0) < 0.5) ? 2.0 : 1.0);
+}
+
+// Extracts a level from a point-sampled, linear R8 byte. subPixel is an integer
+// in [0, pixelsPerTexel). The public signature and 1bpp -> fill expansion are unchanged.
+//
+// Centered residue: for byte B, shift s and radix R = 2^bitsPerPixel,
+//   floor(R * frac((B + 0.5) / (R * 2^s))) = (B >> s) & (R - 1).
+// The half-byte bias keeps the input off every integer boundary. Consequently the
+// initial byte-rounding floor and every intermediate right-shift floor are redundant.
+// The scale is an exact power of two; this does NOT reintroduce approximate division.
 float TexpixExtractLevel(float atlasR, float subPixel, float atlasFormat)
 {
-    float packedByte = floor(atlasR * 255.0 + 0.5);
-    float fillOnly = atlasFormat >= 0.5 ? 1.0 : 0.0;
-
-    // Right-shift the byte by subPixel * bitsPerPixel (0..7), one binary digit of the
-    // shift amount at a time: >>4, >>2, >>1. Each step is an exact multiply + floor.
-    float shift = fillOnly > 0.5 ? subPixel : subPixel * 2.0;
-    float q = packedByte;
-    q = shift >= 3.5 ? floor(q * 0.0625) : q;
-    shift = shift >= 3.5 ? shift - 4.0 : shift;
-    q = shift >= 1.5 ? floor(q * 0.25) : q;
-    shift = shift >= 1.5 ? shift - 2.0 : shift;
-    q = shift >= 0.5 ? floor(q * 0.5) : q;
-
-    // Keep the low 1 or 2 bits.
-    float bit1 = q - floor(q * 0.5) * 2.0;
-    float bits2 = q - floor(q * 0.25) * 4.0;
-    return fillOnly > 0.5 ? bit1 * TEXPIX_LEVEL_FILL : bits2;
+    bool fillOnly = atlasFormat >= 0.5;
+    float phase = subPixel * (fillOnly ? 0.125 : 0.25);
+    float residue = frac((atlasR * 255.0 + 0.5) * TexpixResidueScale(phase, fillOnly));
+    float level = floor(residue * (fillOnly ? 2.0 : 4.0));
+    return level * (fillOnly ? TEXPIX_LEVEL_FILL : 1.0);
 }
+
+// Vertex-stage partial evaluation for the default fill/outline palette. This is
+// an internal vertex-to-fragment payload, NOT a change to the mesh's uv0 format:
+//   xy = continuous atlas texel coordinates (not normalized UVs)
+//   z  = first visible residue bucket, w = first fill residue bucket.
+// Inputs are finite, nonnegative atlas coordinates, as emitted by Texpix.
+// The x transform is affine and power-of-two; do not floor in the vertex shader.
+// One float4 replaces the existing fontPx/mode/format interpolator, with no extra
+// Canvas channels, materials, keywords, textures, or draw calls.
+float4 TexpixPrepareCoverage(float2 fontPx, float outlineMode, float atlasFormat)
+{
+    bool fillOnly = atlasFormat >= 0.5;
+    float fillMin = fillOnly ? 0.5 : 0.75;
+    float visibleMin = outlineMode >= 1.5 ? 0.25 : (outlineMode >= 0.5 ? 0.5 : 0.75);
+    visibleMin = fillOnly ? 0.5 : visibleMin;
+    return float4(fontPx.x * (fillOnly ? 0.125 : 0.25), fontPx.y, visibleMin, fillMin);
+}
+
+float2 TexpixPreparedAtlasUV(float4 prepared, float4 atlasTexelSize)
+{
+    return float2((floor(prepared.x) + 0.5) * atlasTexelSize.x,
+                  (floor(prepared.y) + 0.5) * atlasTexelSize.y);
+}
+
+// Fused extraction + palette evaluation. Do not reconstruct the integer level:
+// thresholds classify the residue directly. visibleMin <= fillMin, so the two
+// masks are disjoint and the selected straight-alpha color is preserved exactly.
+// No lerp-based color cancellation, premultiplication, or change to blending.
+float4 TexpixShadePrepared(float atlasR, float4 prepared, float4 fillColor, float4 outlineColor)
+{
+    // Use a midpoint comparison instead of treating an interpolated flag as exact.
+    bool fillOnly = prepared.w < 0.625;
+    float phase = frac(prepared.x);
+    float residue = frac((atlasR * 255.0 + 0.5) * TexpixResidueScale(phase, fillOnly));
+    float isFill = step(prepared.w, residue);
+    float isOutline = step(prepared.z, residue) - isFill;
+    return fillColor * isFill + outlineColor * isOutline;
+}
+
+// Usage: prepare once per vertex, then sample/shade once per fragment. The fetch
+// remains unconditional: alpha clipping, masks and derivatives keep their ordering.
+#define TexpixSampleCoverage_Tex2D(tex, texelSize, prepared, fillColor, outlineColor) \
+    TexpixShadePrepared(tex2D((tex), TexpixPreparedAtlasUV((prepared), (texelSize))).r, \
+                        (prepared), (fillColor), (outlineColor))
 
 // Convenience: level of the font pixel at fontPx, sampled from a texture object.
 // Usage (built-in pipeline):
