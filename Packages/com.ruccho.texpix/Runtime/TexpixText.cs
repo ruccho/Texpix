@@ -328,8 +328,10 @@ namespace Texpix
 
         public float minWidth => 0f;
         public float flexibleWidth => -1f;
+        public float maxWidth => float.PositiveInfinity;
         public float minHeight => 0f;
         public float flexibleHeight => -1f;
+        public float maxHeight => float.PositiveInfinity;
         public int layoutPriority => 0;
 
         public void CalculateLayoutInputHorizontal()
