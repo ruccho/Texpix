@@ -246,6 +246,8 @@ namespace Texpix
             {
                 if (s_SharedMaterial == null)
                 {
+                    // The shader is located in a Resources folder so that it is included in player builds
+                    // without being referenced by an asset or listed in Always Included Shaders.
                     var shader = Shader.Find("Texpix/UI Default");
                     if (shader == null)
                     {
