@@ -254,12 +254,25 @@ namespace Texpix
             _initialized = true;
         }
 
+        // Boxed FontFaceHandle; null when the FontEngine uses the current face (before Unity 6000.6).
+        private object _faceHandle;
+
         private void LoadFace()
         {
             var error = FontEngine.LoadFontFace(sourceFont, pixelSize, 0);
             if (error != FontEngineError.Success && sourceFont.fontNames is { Length: > 0 })
                 // Dynamic OS fonts carry no font data; retry via the system family name.
                 error = FontEngine.LoadFontFace(sourceFont.fontNames[0], "Regular", pixelSize);
+            if (error != FontEngineError.Success)
+                throw new InvalidOperationException($"TexpixFontAsset '{name}': LoadFontFace failed with {error}.");
+
+            // Unity 6000.6+ rasterizes and reads kerning through an explicit face handle
+            // instead of the current face.
+            if (!FontEngineBridge.UsesFaceHandle)
+                return;
+            error = FontEngineBridge.LoadFontFace(sourceFont, pixelSize, 0, out _faceHandle);
+            if (error != FontEngineError.Success && sourceFont.fontNames is { Length: > 0 })
+                error = FontEngineBridge.LoadFontFace(sourceFont.fontNames[0], "Regular", pixelSize, out _faceHandle);
             if (error != FontEngineError.Success)
                 throw new InvalidOperationException($"TexpixFontAsset '{name}': LoadFontFace failed with {error}.");
         }
@@ -299,7 +312,7 @@ namespace Texpix
         {
             EnsureFaceLoaded();
             _kerning = new Dictionary<ulong, int>();
-            var records = FontEngineBridge.GetAllPairAdjustmentRecords();
+            var records = FontEngineBridge.GetAllPairAdjustmentRecords(_faceHandle);
             if (records == null)
                 return;
             foreach (var record in records)
@@ -345,7 +358,7 @@ namespace Texpix
             _scratchFreeRects.Add(new GlyphRect(0, 0, _scratchTexture.width - 1, _scratchTexture.height - 1));
             _scratchUsedRects.Clear();
 
-            if (!FontEngineBridge.TryAddGlyphToTexture(glyphIndex, 0, GlyphPackingMode.BestShortSideFit,
+            if (!FontEngineBridge.TryAddGlyphToTexture(_faceHandle, glyphIndex, 0, GlyphPackingMode.BestShortSideFit,
                     _scratchFreeRects, _scratchUsedRects, GlyphRenderMode.RASTER, _scratchTexture, out var rendered)
                 || rendered == null)
             {

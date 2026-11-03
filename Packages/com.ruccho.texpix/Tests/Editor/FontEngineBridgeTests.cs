@@ -18,7 +18,8 @@ namespace Texpix.Tests
         public void TryAddGlyphToTexture_RendersSystemFontGlyph()
         {
             FontEngine.InitializeFontEngine();
-            if (FontEngine.LoadFontFace("Arial", "Regular", 16f) != FontEngineError.Success)
+            if (FontEngine.LoadFontFace("Arial", "Regular", 16f) != FontEngineError.Success ||
+                FontEngineBridge.LoadFontFace("Arial", "Regular", 16f, out var faceHandle) != FontEngineError.Success)
             {
                 Assert.Ignore("Arial not available on this system.");
                 return;
@@ -33,7 +34,7 @@ namespace Texpix.Tests
             var freeRects = new List<GlyphRect> { new(0, 0, 63, 63) };
             var usedRects = new List<GlyphRect>();
 
-            var added = FontEngineBridge.TryAddGlyphToTexture(glyphIndex, 0, GlyphPackingMode.BestShortSideFit,
+            var added = FontEngineBridge.TryAddGlyphToTexture(faceHandle, glyphIndex, 0, GlyphPackingMode.BestShortSideFit,
                 freeRects, usedRects, GlyphRenderMode.RASTER, texture, out var glyph);
 
             Assert.That(added, Is.True);
@@ -57,13 +58,13 @@ namespace Texpix.Tests
         public void GetAllPairAdjustmentRecords_ReturnsRecordsForKernedFont()
         {
             FontEngine.InitializeFontEngine();
-            if (FontEngine.LoadFontFace("Arial", "Regular", 16f) != FontEngineError.Success)
+            if (FontEngineBridge.LoadFontFace("Arial", "Regular", 16f, out var faceHandle) != FontEngineError.Success)
             {
                 Assert.Ignore("Arial not available on this system.");
                 return;
             }
 
-            var records = FontEngineBridge.GetAllPairAdjustmentRecords();
+            var records = FontEngineBridge.GetAllPairAdjustmentRecords(faceHandle);
             Assert.That(records, Is.Not.Null);
             Assert.That(records.Length, Is.GreaterThan(0));
         }
