@@ -21,7 +21,7 @@ Use TMP for body text and free scaling. Use Texpix when the font is the art.
 ## Requirements
 
 - Unity 6000.3 or newer
-- uGUI (Canvas), or [YAUI](https://github.com/ruccho/YAUI) (see [YAUI](#yaui)). UI Toolkit is not supported.
+- uGUI (Canvas), or [YAUI](https://github.com/ruccho/YAUI) 0.4.0 or newer (see [YAUI](#yaui)). UI Toolkit is not supported.
 
 ## Installation
 
@@ -102,7 +102,7 @@ The inspector has **Bake** / **Clear** buttons and an atlas preview. Baking seri
 
 ### YAUI
 
-When the [YAUI](https://github.com/ruccho/YAUI) package (`com.ruccho.yaui`) is installed, the `Texpix.Yaui` assembly adds **Texpix Text** for YAUI panels (`TexpixYauiText`, **Add Component → YAUI → Texpix Text**). It is a YAUI element with the settings of the uGUI component (font, text, color, pixel scale, alignment, wrap mode, overflow, spacing, rich text, outline and sprite asset) and the same atlas and layout. It measures its text for the YAUI layout: a wrapped text is laid out again in the same frame once its width is known. It takes no children.
+When the [YAUI](https://github.com/ruccho/YAUI) package (`com.ruccho.yaui`) 0.4.0 or newer is installed, the `Texpix.Yaui` assembly adds **Texpix Text** for YAUI panels (`TexpixYauiText`, **Add Component → YAUI → Texpix Text**). It is a YAUI element with the settings of the uGUI component (font, text, color, pixel scale, alignment, wrap mode, overflow, spacing, rich text, outline and sprite asset) and the same atlas and layout. It measures its text for the YAUI layout: a wrapped text is laid out again in the same frame once its width is known. It takes no children.
 
 - **Draw calls.** By default, glyphs draw with Texpix's material (`Hidden/Texpix/Yaui`), which splits the draws of the panel around each text. To draw them in YAUI's uber shader instead, together with the boxes and images around them, add **TexpixYauiModule** (`Packages/com.ruccho.texpix/Runtime/Yaui/TexpixYauiModule.asset`) to the project's YAUI shader settings and generate the uber shader (see [Shader modules](https://ruccho.com/YAUI/manual/custom-shaders#shader-modules) in the YAUI manual). Texts use the module whenever the generated shader has it.
 - **Per-glyph effects.** `GlyphModifier` receives the glyphs (`TexpixYauiGlyph`: the box, horizontal and vertical mirroring, and whether it is an inline sprite) before they are drawn, and can move or mirror them. It runs when the text is generated; call `RefreshGlyphs()` to apply it again without generating the text, for example every frame of an animation.

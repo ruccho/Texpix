@@ -19,7 +19,7 @@ TextMesh Pro は SDF (signed distance field) を軸に設計されており、�
 ## 動作要件
 
 - Unity 6000.3 以降
-- uGUI (Canvas)、または [YAUI](https://github.com/ruccho/YAUI) ([YAUI](#yaui) を参照)。UI Toolkit には対応していません。
+- uGUI (Canvas)、または [YAUI](https://github.com/ruccho/YAUI) 0.4.0 以降 ([YAUI](#yaui) を参照)。UI Toolkit には対応していません。
 
 ## インストール
 
@@ -100,7 +100,7 @@ https://github.com/ruccho/Texpix.git?path=Packages/com.ruccho.texpix#release
 
 ### YAUI
 
-[YAUI](https://github.com/ruccho/YAUI) パッケージ (`com.ruccho.yaui`) が入っていると、`Texpix.Yaui` アセンブリが YAUI のパネル用の **Texpix Text** (`TexpixYauiText`、**Add Component → YAUI → Texpix Text**) を追加します。uGUI 版と同じ設定項目 (フォント、テキスト、色、Pixel Scale、揃え、折り返し、はみ出し、間隔、リッチテキスト、アウトライン、スプライトアセット) を持つ YAUI の要素で、アトラスとレイアウトも uGUI 版と共通です。YAUI のレイアウトのためにテキストの大きさを測り、折り返すテキストは幅が決まった後、同じフレームの中でレイアウトし直されます。子要素は持てません。
+[YAUI](https://github.com/ruccho/YAUI) パッケージ (`com.ruccho.yaui`) の 0.4.0 以降が入っていると、`Texpix.Yaui` アセンブリが YAUI のパネル用の **Texpix Text** (`TexpixYauiText`、**Add Component → YAUI → Texpix Text**) を追加します。uGUI 版と同じ設定項目 (フォント、テキスト、色、Pixel Scale、揃え、折り返し、はみ出し、間隔、リッチテキスト、アウトライン、スプライトアセット) を持つ YAUI の要素で、アトラスとレイアウトも uGUI 版と共通です。YAUI のレイアウトのためにテキストの大きさを測り、折り返すテキストは幅が決まった後、同じフレームの中でレイアウトし直されます。子要素は持てません。
 
 - **ドローコール。** 既定では、文字は Texpix のマテリアル (`Hidden/Texpix/Yaui`) で描かれるため、パネルの描画はテキストごとに分かれます。周りのボックスや画像と一緒に YAUI の Uber シェーダーで描くには、プロジェクトの YAUI のシェーダー設定に **TexpixYauiModule** (`Packages/com.ruccho.texpix/Runtime/Yaui/TexpixYauiModule.asset`) を加え、Uber シェーダーを生成してください (YAUI のマニュアルの[シェーダーモジュール](https://ruccho.com/YAUI/ja/manual/custom-shaders#shader-modules)を参照)。生成したシェーダーにモジュールがあれば、テキストは自動でそれを使います。
 - **文字ごとの効果。** `GlyphModifier` は描く前の文字 (`TexpixYauiGlyph`: 箱、左右・上下の反転、インラインスプライトかどうか) を受け取り、位置を動かしたり反転したりできます。テキストを生成したときに実行され、`RefreshGlyphs()` を呼ぶと、テキストを生成し直さずにもう一度適用します (アニメーションで毎フレーム呼ぶなど)。
