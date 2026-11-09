@@ -4,7 +4,7 @@
 
 <img width="720" alt="Image" src="https://github.com/user-attachments/assets/136cda22-0931-4141-a566-9528d3ca30ca" />
 
-**A pixel-font rendering system for Unity (uGUI).**
+**A pixel-font rendering system for Unity (uGUI and [YAUI](https://github.com/ruccho/YAUI)).**
 
 Texpix draws pixel fonts the way they were drawn — one font pixel, one screen block, never blurred, never half-covered. It replaces TextMesh Pro for pixel-art UI instead of fighting it into shape.
 
@@ -21,7 +21,7 @@ Use TMP for body text and free scaling. Use Texpix when the font is the art.
 ## Requirements
 
 - Unity 6000.3 or newer
-- uGUI (Canvas). UI Toolkit is not supported.
+- uGUI (Canvas), or [YAUI](https://github.com/ruccho/YAUI) 0.4.0 or newer (see [YAUI](#yaui)). UI Toolkit is not supported.
 
 ## Installation
 
@@ -100,6 +100,14 @@ The inspector has **Bake** / **Clear** buttons and an atlas preview. Baking seri
 
 `Runtime/Shaders/Texpix.hlsl` is a public include exposing the atlas decode API (`TexpixAtlasUV`, `TexpixSubPixel`, `TexpixExtractLevel`, `TexpixUnpackOutline`, `TexpixShade`). Import the **Custom Shader** sample from Package Manager for a working example (hue-cycling fill with the full UI stencil/clip boilerplate). Vertices carry atlas font-pixel coordinates in `uv0.xy` and the packed outline color/mode plus atlas format in `uv0.zw`. Assign your material to the component's standard `material` slot; fallback sub-renderers inherit it.
 
+### YAUI
+
+When the [YAUI](https://github.com/ruccho/YAUI) package (`com.ruccho.yaui`) 0.4.0 or newer is installed, the `Texpix.Yaui` assembly adds **Texpix Text** for YAUI panels (`TexpixYauiText`, **Add Component → YAUI → Texpix Text**). It is a YAUI element with the settings of the uGUI component (font, text, color, pixel scale, alignment, wrap mode, overflow, spacing, rich text, outline and sprite asset) and the same atlas and layout. It measures its text for the YAUI layout: a wrapped text is laid out again in the same frame once its width is known. It takes no children.
+
+- **Draw calls.** By default, glyphs draw with Texpix's material (`Hidden/Texpix/Yaui`), which splits the draws of the panel around each text. To draw them in YAUI's uber shader instead, together with the boxes and images around them, add **TexpixYauiModule** (`Packages/com.ruccho.texpix/Runtime/Yaui/TexpixYauiModule.asset`) to the project's YAUI shader settings and generate the uber shader (see [Shader modules](https://ruccho.com/YAUI/manual/custom-shaders#shader-modules) in the YAUI manual). Texts use the module whenever the generated shader has it.
+- **Per-glyph effects.** `GlyphModifier` receives the glyphs (`TexpixYauiGlyph`: the box, horizontal and vertical mirroring, and whether it is an inline sprite) before they are drawn, and can move or mirror them. It runs when the text is generated; call `RefreshGlyphs()` to apply it again without generating the text, for example every frame of an animation.
+- **Shared interface.** Both components implement `ITexpixText`, so code that only sets the string works with either UI system.
+
 ---
 
 # Advanced
@@ -128,7 +136,7 @@ The inspector has **Bake** / **Clear** buttons and an atlas preview. Baking seri
 
 ## Limitations
 
-- uGUI only — no UI Toolkit, no TextMeshPro drop-in replacement.
+- uGUI and YAUI only — no UI Toolkit, no TextMeshPro drop-in replacement.
 - No justified alignment or line-height multiplier.
 - One sprite asset per text component; sprite quads always draw above glyphs.
 - Kerning never applies across a font-fallback boundary.

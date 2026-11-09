@@ -18,7 +18,7 @@ namespace Texpix
     // itself, so the component must declare it explicitly.
     [AddComponentMenu("UI/Texpix Text")]
     [RequireComponent(typeof(CanvasRenderer))]
-    public sealed class TexpixText : MaskableGraphic, ILayoutElement
+    public sealed class TexpixText : MaskableGraphic, ILayoutElement, ITexpixText
     {
         private const string SpriteChildName = "Texpix Sprites";
         private const string FallbackChildPrefix = "Texpix Fallback ";
@@ -493,6 +493,14 @@ namespace Texpix
 
         private void OnAtlasChanged()
         {
+            // A destroyed text can still be subscribed: one subscribed by OnValidate while it was inactive never
+            // received OnDisable (for example the edit-mode instances destroyed when entering Play mode).
+            if (this == null)
+            {
+                UnsubscribeFont();
+                return;
+            }
+
             // Fired on atlas texture recreation (growth) and atlas resets — both
             // require a repaint, including our own (a reset invalidates quads already
             // emitted during the current populate). Dirtying inside the canvas

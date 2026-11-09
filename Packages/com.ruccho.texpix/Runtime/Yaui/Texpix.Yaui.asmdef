@@ -1,0 +1,25 @@
+{
+    "name": "Texpix.Yaui",
+    "rootNamespace": "Texpix.Yaui",
+    "references": [
+        "Texpix",
+        "Yaui"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "TEXPIX_YAUI"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.ruccho.yaui",
+            "expression": "0.4.0",
+            "define": "TEXPIX_YAUI"
+        }
+    ],
+    "noEngineReferences": false
+}
